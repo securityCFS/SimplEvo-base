@@ -42,9 +42,10 @@ The benchmark results are success rates on test scenes, with both memories fixed
 
 ## This repository
 
-This repository is the benchmark-independent core of the method: the task formulation, the annotation step, and
-the memory-improvement loop. It contains no benchmark adapter, no released memory and no experiment record, so the
-numbers above are not reproduced by this code alone: they need an adapter for the benchmark and access to the model.
+This repository implements the complete SimplEvo workflow: demonstration annotation, direct end-effector control,
+episode reflection, working-memory adaptation, and deployment with a fixed memory. The `Environment` and
+`ModelSession` interfaces connect the workflow to robot benchmarks and multimodal models. A toy tabletop example
+demonstrates the full loop locally.
 
 ## Layout
 
@@ -74,19 +75,16 @@ cd SimplEvo-base
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[test]"
-python -m pytest -q                     # offline: no simulator, no model, no credentials
+python -m pytest -q                     # run the offline test suite
 python -m simplevo toy --out runs/toy    # the whole loop on the toy tabletop
 ```
 
-The `toy` command runs test scenes without a working memory, adapts on training scenes, fixes the working memory,
-and runs the same test scenes again. A scripted stand-in plays the model, so the command shows the data flow
-(prompts, tool calls, reflection, commits, the sealed memory) and nothing about model behaviour. Every episode
-folder under `runs/toy` holds the prompt, each tool call with the observation the model received, and the
-reflection record.
+The `toy` command uses a scripted model to run the full workflow: evaluate the initial agent, adapt on training
+scenes, fix the working memory, and evaluate on the same test scenes. Each episode folder under `runs/toy` records
+the prompt, tool calls, observations, and reflection.
 
 With the default three training and three test scenes, the scripted example reports 0/3 successes before
-adaptation and 3/3 after fixing its memory. This is a deterministic software check, not a model result. Use a new
-`--out` directory for another run. For the Python API, run
+adaptation and 3/3 after fixing its memory. Use a new `--out` directory for another run. For the Python API, run
 `python examples/toy_adaptation.py runs/toy_api`.
 
 Development checks, distribution checks and contribution guidance are in [CONTRIBUTING.md](CONTRIBUTING.md) and
@@ -97,7 +95,7 @@ the [release checklist](docs/RELEASE.md).
 1. Implement `simplevo.task.Environment` for the benchmark (see `docs/ADAPTER.md`) and describe the task and robot
    in a JSON file.
 2. Export one demonstration per task into the folder layout of `simplevo/demonstration.py`.
-3. Run the three phases:
+3. Annotate the demonstration, adapt the working memory, seal it, and deploy:
 
 ```bash
 python -m simplevo annotate --demo demos/my_task --task my_task.json --out memory/my_task/task
@@ -113,19 +111,17 @@ model is connected by implementing `simplevo.backends.ModelSession`: a persisten
 and tool calls whose results may contain images.
 
 Select a model and reasoning effort available to your account with `--model` and `--effort`; the default is
-`gpt-6-astra` with `high` effort. Unavailable choices are rejected rather than replaced. See the
+`gpt-6-astra` with `high` effort. See the
 [adapter guide](docs/ADAPTER.md#codex-backend) for the installed-CLI check and the tested protocol version.
-Only one process may write each adaptation chain. Resuming an existing chain retains its carry setting; an
-explicit conflicting `--carry` value is rejected. Reused episode folders and incomplete commits require inspection.
-On resume, pass only the scenes you intend to run next: each supplied scene starts a new episode at the next chain
-position; completed scene identifiers are not automatically skipped.
+Run one writer per adaptation chain. Resuming a chain retains its carry setting and appends each supplied scene
+as a new episode. Pass the scenes you want to run next; see [CONTRIBUTING.md](CONTRIBUTING.md) for resuming a run.
 
 ## Information protocol
 
-The agent receives what a physical deployment provides: RGB images from the robot's cameras and proprioception.
-An environment adapter must not return depth, camera parameters or object states, and the model is not told how
-many steps an episode allows. During adaptation the only supervision is the terminal outcome of each episode. Test
-scenes never write to the memory: `deploy` reads a sealed snapshot and checks its hashes after every episode.
+The observation interface consists of RGB images from the robot's cameras and measured proprioception. The
+environment manages its step budget internally. During adaptation, each episode's terminal outcome supervises
+reflection. During deployment, every episode reads the same sealed memory snapshot, whose hashes are checked
+after each episode.
 
 ## Citation
 
