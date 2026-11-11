@@ -44,6 +44,8 @@ The environment's `embodiment` must match the task file, including the descripti
 The runner owns the environment and model session created by their factories and closes both on success or error.
 When calling `run_episode` directly, the caller owns their cleanup. An episode must end with a non-null `Outcome`;
 an adapter that stops advancing without ending the episode raises an error instead of recording a completed run.
+Adapter errors propagate to the caller. Cancelling a live model turn stops the episode and releases its resources;
+the partial episode record remains available for inspection.
 
 ## Task file
 

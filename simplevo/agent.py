@@ -22,7 +22,7 @@ from typing import Callable
 from .backends import ModelSession, ToolResult
 from .chain import AdaptationChain, fixed_view, validate_fixed
 from .content import as_json, image, text
-from .control import Controller, model_state
+from .control import Controller, InvalidAction, model_state
 from .control import tool_specs as control_specs
 from .demonstration import DEMO_TOOLS, Demonstration, DemoTools
 from .demonstration import tool_specs as demo_specs
@@ -122,7 +122,7 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
             if name in CONTROL_TOOLS:
                 found = problems(arguments, control_schemas[name])
                 if found:
-                    raise ValueError("; ".join(found[:5]))
+                    raise InvalidAction("; ".join(found[:5]))
                 summaries = [] if name == "observe" else (
                     controller.execute(arguments) if name == "execute_eef" else controller.set_gripper(arguments))
                 content = _observe(env, arguments["cameras"], folder / "observation")
@@ -136,6 +136,8 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
             else:
                 raise ValueError(f"unknown tool {name}")
         except (ValueError, KeyError, TypeError) as error:   # MemoryRefusal and DemonstrationError are ValueErrors
+            if name in CONTROL_TOOLS and not isinstance(error, InvalidAction):
+                raise   # Adapter failures may follow an executed motion; stop the episode.
             success = False
             content = [text(f"No further action executed. Invalid tool parameters: {error}")]
         if memory is not None:
@@ -153,8 +155,10 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
     while True:
         turn = session.run_turn(inputs, handle)
         messages += turn.messages
-        if env.ended or turn.status == "interrupted":
+        if env.ended:
             break
+        if turn.status == "interrupted":
+            raise RuntimeError("model turn interrupted before the environment ended")
         if turn.status == "failed":
             if attempts >= retries or not session.is_transient(turn.error):
                 raise RuntimeError(f"model turn failed: {turn.error}")

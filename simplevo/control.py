@@ -13,6 +13,10 @@ from .schema import problems, tool
 from .task import Embodiment, Environment
 
 
+class InvalidAction(ValueError):
+    """A rejected model command, before any environment action is executed."""
+
+
 def _vector(value, length: int, name: str) -> np.ndarray:
     array = np.asarray(value, dtype=float)
     if array.shape != (length,) or not np.isfinite(array).all():
@@ -112,13 +116,13 @@ class Controller:
     def _validate_waypoint(self, waypoint: dict) -> None:
         found = problems(waypoint, self.waypoint_schema["items"])
         if found:
-            raise ValueError("; ".join(found[:5]))
+            raise InvalidAction("; ".join(found[:5]))
         if waypoint.get("motion_steps", 0) > waypoint["steps"]:
-            raise ValueError("motion_steps must be between 0 and steps")
+            raise InvalidAction("motion_steps must be between 0 and steps")
         for arm in self.embodiment.arms:
             wanted = waypoint[arm]
             if wanted is not None and abs(np.linalg.norm(wanted["quaternion_wxyz"]) - 1) > 0.02:
-                raise ValueError("quaternions must be unit length (small rounding error is normalized)")
+                raise InvalidAction("quaternions must be unit length (small rounding error is normalized)")
 
     def _measured(self):
         state = self.env.state()
@@ -181,7 +185,7 @@ class Controller:
         """Run the waypoints of one ``execute_eef`` call; returns one summary per started waypoint."""
         found = problems(arguments["waypoints"], self.waypoint_schema)
         if found:
-            raise ValueError("; ".join(found[:5]))
+            raise InvalidAction("; ".join(found[:5]))
         # Validate the whole request before the first motion. Each ramp still starts
         # from the measured state after the preceding waypoint has executed.
         for waypoint in arguments["waypoints"]:

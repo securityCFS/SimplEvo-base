@@ -2,7 +2,7 @@
 import pytest
 
 from simplevo import AdaptationChain, Outcome, adapt, deploy, run_episode
-from simplevo.backends import ScriptedSession
+from simplevo.backends import ModelSession, ScriptedSession, Turn
 from simplevo.envs.toy import TASK, ToyTabletop
 from simplevo.working_memory import REFLECTION_CALLS
 
@@ -89,3 +89,39 @@ def test_reflection_turn_stops_at_its_call_budget(tmp_path):
     records = adapt(chain, [0], ToyTabletop, lambda _: ScriptedSession(model), TASK, tmp_path / "run")
     assert len(calls) == REFLECTION_CALLS
     assert records[0].reflection["calls"] == REFLECTION_CALLS
+
+
+def test_cancelled_live_episode_stops_without_advancing_or_committing(tmp_path):
+    env = ToyTabletop(0)
+
+    class Interrupted(ModelSession):
+        def start(self, tools, instructions=None):
+            pass
+
+        def run_turn(self, inputs, handle):
+            return Turn("interrupted")
+
+    chain = AdaptationChain(tmp_path / "chain", task=TASK.name)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        adapt(chain, [0], lambda _: env, lambda _: Interrupted(), TASK, tmp_path / "run")
+    assert env.steps_used == 0 and chain.commits() == []
+    assert not (tmp_path / "run/001/policy/result.json").exists()
+
+
+def test_adapter_failure_after_motion_propagates_without_more_actions(tmp_path):
+    class BrokenCamera(ToyTabletop):
+        def render(self, camera):
+            if self.steps_used:
+                raise ValueError("camera decode failed")
+            return super().render(camera)
+
+    def model(inputs, call):
+        call("set_gripper", {"side": "left", "opening": 1, "steps": 4, "cameras": ["overview"]})
+        return "done"
+
+    env = BrokenCamera(0)
+    chain = AdaptationChain(tmp_path / "chain", task=TASK.name)
+    with pytest.raises(ValueError, match="camera decode failed"):
+        adapt(chain, [0], lambda _: env, lambda _: ScriptedSession(model), TASK, tmp_path / "run")
+    assert env.steps_used == 4 and chain.commits() == []
+    assert not (tmp_path / "run/001/policy/result.json").exists()

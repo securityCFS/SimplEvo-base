@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop cancelled live episodes and propagate environment failures after motion, preserving the partial episode
+  evidence for inspection.
 - Validate every waypoint before starting a motion batch, including quaternion and motion-duration checks.
 - Reject malformed robot descriptions, empty or non-finite demonstrations, and out-of-folder task-memory frames.
 - Require ordered annotation stages covering the recording without gaps; stop after the first accepted submission.
