@@ -9,8 +9,8 @@ the keyframe PNG files.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .content import image, text
@@ -47,17 +47,23 @@ class TaskMemory:
             entries.append({"file": name, "label": label})
         path = folder / "task_memory.json"
         path.write_text(json.dumps({"version": 1, "text": self.text, "keyframes": entries}, indent=1,
-                                   ensure_ascii=False) + "\n")
+                                   ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         return path
 
     @classmethod
     def load(cls, folder: Path) -> "TaskMemory":
         folder = Path(folder)
-        data = json.loads((folder / "task_memory.json").read_text())
+        data = json.loads((folder / "task_memory.json").read_text(encoding="utf-8"))
         if data.get("version") != 1:
             raise ValueError("unsupported task memory version")
-        return cls(data["text"], [(entry["label"], (folder / entry["file"]).read_bytes())
-                                  for entry in data["keyframes"]])
+        keyframes = []
+        for entry in data["keyframes"]:
+            relative = Path(entry["file"])
+            path = (folder / relative).resolve()
+            if relative.is_absolute() or not path.is_relative_to(folder.resolve()):
+                raise ValueError("keyframe must stay inside the task memory folder")
+            keyframes.append((entry["label"], path.read_bytes()))
+        return cls(data["text"], keyframes)
 
     def inputs(self) -> list[dict]:
         """The items placed before the first live observation of an episode."""

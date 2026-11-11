@@ -12,17 +12,20 @@ back (``tools/call_NNNNN/{request.json, response_summary.json, observation/}``).
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import time
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Callable
 
 from .backends import ModelSession, ToolResult
 from .chain import AdaptationChain, fixed_view, validate_fixed
 from .content import as_json, image, text
-from .control import Controller, model_state, tool_specs as control_specs
-from .demonstration import DEMO_TOOLS, DemoTools, Demonstration, tool_specs as demo_specs
+from .control import Controller, model_state
+from .control import tool_specs as control_specs
+from .demonstration import DEMO_TOOLS, Demonstration, DemoTools
+from .demonstration import tool_specs as demo_specs
 from .schema import problems
 from .task import BASE_INSTRUCTIONS, Environment, Outcome, TaskSpec, task_prompt
 from .task_memory import QUERY_GUIDANCE, TaskMemory
@@ -58,7 +61,7 @@ class EpisodeRecord:
 
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=1, ensure_ascii=False) + "\n")
+    path.write_text(json.dumps(value, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
 
 def _observe(env: Environment, cameras, folder: Path) -> list[dict]:
@@ -83,6 +86,8 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
     ``memory_view`` is the view folder the chain built for this episode (or a private copy of a fixed memory);
     without it the agent acts with the task memory alone.
     """
+    if env.embodiment != task.embodiment:
+        raise ValueError("environment embodiment does not match the task embodiment")
     out = Path(out)
     policy = out / "policy"
     if policy.exists():
@@ -104,7 +109,7 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
     instructions = BASE_INSTRUCTIONS + ("\n" + QUERY_GUIDANCE if task_memory is not None else "")
     prompt = task_prompt(task, (QUERY_GUIDANCE if task_memory is not None else "",
                                 guidance(memory.position, memory.carry, fixed) if memory is not None else ""))
-    (policy / "initial_prompt.txt").write_text(prompt + "\n")
+    (policy / "initial_prompt.txt").write_text(prompt + "\n", encoding="utf-8", newline="\n")
     calls = 0
 
     def handle(name: str, arguments: dict) -> ToolResult:
@@ -163,6 +168,8 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
             break
     termination = "episode_complete" if env.ended else "model_finished"
     held = 0 if env.ended else controller.hold_until_end()      # the evaluator, not the model, ends the episode
+    if env.outcome is None:
+        raise RuntimeError("environment ended without a terminal outcome")
     record = EpisodeRecord(env.outcome, termination, calls, env.steps_used, held, messages, session.usage())
     if memory is not None and not fixed:
         record.reflection = _reflect(session, memory, policy, env.outcome, held > 0, show_outcome)
@@ -176,7 +183,7 @@ def _reflect(session: ModelSession, memory: MemoryTools, policy: Path, outcome, 
     """The reflection turn: the same conversation, the memory tools only, a bounded number of calls and writes."""
     memory.start_reflection()
     prompt = reflection_prompt(outcome, held, show_outcome)
-    (policy / "reflection_prompt.txt").write_text(prompt + "\n")
+    (policy / "reflection_prompt.txt").write_text(prompt + "\n", encoding="utf-8", newline="\n")
     record = {"calls": 0, "refused": 0}
 
     def handle(name: str, arguments: dict) -> ToolResult:
@@ -184,12 +191,14 @@ def _reflect(session: ModelSession, memory: MemoryTools, policy: Path, outcome, 
         if name not in MEMORY_TOOLS or record["calls"] > REFLECTION_CALLS:
             record["refused"] += 1
             return ToolResult([text("The episode has ended; only the memory tools work"
-                                    + (", and their budget is used up." if name in MEMORY_TOOLS else "."))], False)
+                                    + (", and their budget is used up." if name in MEMORY_TOOLS else "."))], False,
+                              end_turn=record["calls"] >= REFLECTION_CALLS)
         try:
-            return ToolResult(memory.call(name, arguments, f"reflection-{record['calls']}"))
+            return ToolResult(memory.call(name, arguments, f"reflection-{record['calls']}"),
+                              end_turn=record["calls"] >= REFLECTION_CALLS)
         except (ValueError, KeyError, TypeError) as error:
             record["refused"] += 1
-            return ToolResult([text(f"Refused: {error}")], False)
+            return ToolResult([text(f"Refused: {error}")], False, end_turn=record["calls"] >= REFLECTION_CALLS)
 
     turn = session.run_turn([text(prompt)], handle)
     record.update(status=turn.status, note_writes=memory.reflection_writes, messages=turn.messages)
@@ -200,6 +209,8 @@ def _reflect(session: ModelSession, memory: MemoryTools, policy: Path, outcome, 
 def adapt(chain: AdaptationChain, scenes, make_env: Callable[[object], Environment],
           make_session: Callable[[Path], ModelSession], task: TaskSpec, out: Path, **episode_options) -> list:
     """Online adaptation: run the training ``scenes`` in order along ``chain``, committing after each episode."""
+    if chain.task != task.name:
+        raise ValueError(f"chain belongs to task {chain.task!r}, not {task.name!r}")
     records = []
     for scene in scenes:
         position = chain.next_position()
@@ -208,12 +219,12 @@ def adapt(chain: AdaptationChain, scenes, make_env: Callable[[object], Environme
             raise RuntimeError(f"{episode} exists; an uncommitted episode needs a decision, not a silent rerun")
         view = episode / "memory_view"
         chain.build_view(position, view)
-        env, session = make_env(scene), make_session(episode / "session")
-        try:
+        with ExitStack() as resources:
+            env = make_env(scene)
+            resources.callback(env.close)
+            session = make_session(episode / "session")
+            resources.callback(session.close)
             record = run_episode(env, session, task, episode, memory_view=view, **episode_options)
-        finally:
-            session.close()
-            env.close()
         chain.commit(position, episode=episode, staging=episode / "memory_staging", attempt=record.attempt(),
                      arms=task.embodiment.arms)
         records.append(record)
@@ -223,19 +234,23 @@ def adapt(chain: AdaptationChain, scenes, make_env: Callable[[object], Environme
 def deploy(fixed_memory: Path | None, scenes, make_env: Callable[[object], Environment],
            make_session: Callable[[Path], ModelSession], task: TaskSpec, out: Path, **episode_options) -> list:
     """Deployment: every scene reads the same fixed working memory (or none) and nothing is written back."""
+    if fixed_memory is not None and validate_fixed(fixed_memory)["task"] != task.name:
+        raise ValueError(f"fixed memory does not belong to task {task.name!r}")
     records = []
     for index, scene in enumerate(scenes, 1):
         episode = Path(out) / f"{index:03d}"
+        if episode.exists():
+            raise RuntimeError(f"{episode} exists; a deployment episode is never replayed")
         view = None
         if fixed_memory is not None:
             view = episode / "memory_view"
             fixed_view(fixed_memory, view)
-        env, session = make_env(scene), make_session(episode / "session")
-        try:
+        with ExitStack() as resources:
+            if fixed_memory is not None:
+                resources.callback(validate_fixed, fixed_memory)
+            env = make_env(scene)
+            resources.callback(env.close)
+            session = make_session(episode / "session")
+            resources.callback(session.close)
             records.append(run_episode(env, session, task, episode, memory_view=view, fixed=True, **episode_options))
-        finally:
-            session.close()
-            env.close()
-        if fixed_memory is not None:
-            validate_fixed(fixed_memory)
     return records

@@ -1,7 +1,8 @@
 """The Codex app-server backend against a local stand-in for the server: no model, no network, no login."""
 import json
-from pathlib import Path
+import shlex
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,7 @@ from simplevo.backends.codex import IMAGE_OUTPUT_GUIDANCE
 from simplevo.content import image, text
 from simplevo.envs.toy import IDENTITY, TASK, ToyTabletop
 
-FAKE = f"{sys.executable} {Path(__file__).with_name('fake_codex.py')}"
+FAKE = shlex.join([sys.executable, str(Path(__file__).with_name('fake_codex.py'))])
 
 
 def start(tmp_path, monkeypatch, turns):
@@ -97,3 +98,55 @@ def test_episode_end_interrupts_the_turn_and_later_calls_do_not_run(tmp_path, mo
     assert replies[-1] == {"success": False, "contentItems": [
         {"type": "inputText", "text": "The episode has ended; this action was NOT executed."}]}
     assert any(m.get("method") == "turn/interrupt" for m in received(tmp_path))
+
+
+def test_paginated_model_catalog(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_PAGINATE", "1")
+    session = start(tmp_path, monkeypatch, [])
+    session.close()
+    requests = [m["params"] for m in received(tmp_path) if m.get("method") == "model/list"]
+    assert [p["cursor"] for p in requests] == [None, "page-2"]
+
+
+def test_stale_completion_does_not_finish_the_current_turn(tmp_path, monkeypatch):
+    session = start(tmp_path, monkeypatch, [{"calls": [], "stale_completion": True, "message": "current"}])
+    try:
+        session.start([])
+        turn = session.run_turn([text("go")], lambda name, arguments: ToolResult([]))
+    finally:
+        session.close()
+    assert turn.messages == ["current"]
+
+
+def test_server_interrupt_is_reported_as_an_interrupt(tmp_path, monkeypatch):
+    session = start(tmp_path, monkeypatch, [{"calls": [], "status": "interrupted"}])
+    try:
+        session.start([])
+        turn = session.run_turn([text("go")], lambda name, arguments: ToolResult([]))
+    finally:
+        session.close()
+    assert turn.status == "interrupted"
+
+
+def test_close_reaps_server_and_closes_streams(tmp_path, monkeypatch):
+    session = start(tmp_path, monkeypatch, [])
+    session.close()
+    session.close()
+    assert session.process.poll() is not None and not session.reader.is_alive()
+    assert session.process.stdin.closed and session.process.stdout.closed and session.stderr.closed
+
+
+def test_startup_failure_closes_log(tmp_path, monkeypatch):
+    handles = []
+    original = Path.open
+
+    def track(path, *args, **kwargs):
+        handle = original(path, *args, **kwargs)
+        if path.name == "app_server_stderr.log":
+            handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", track)
+    with pytest.raises(FileNotFoundError):
+        CodexSession(tmp_path / "session", executable=str(tmp_path / "does-not-exist"))
+    assert len(handles) == 1 and handles[0].closed

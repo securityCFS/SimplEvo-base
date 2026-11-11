@@ -6,15 +6,15 @@ can act only through the declared tools. Authentication is whatever the ``codex`
 """
 from __future__ import annotations
 
-from collections import deque
 import json
 import os
-from pathlib import Path
 import queue
 import shlex
 import subprocess
 import threading
 import time
+from collections import deque
+from pathlib import Path
 
 from ..content import data_url
 from . import ModelSession, Turn
@@ -63,16 +63,28 @@ class CodexSession(ModelSession):
         self.tokens = dict.fromkeys(TOKEN_KEYS, 0)
         self.handled_calls: set[str] = set()
         command = shlex.split(executable or os.environ.get("SIMPLEVO_CODEX_BIN", "codex"))
-        self.stderr = (self.workdir / "app_server_stderr.log").open("a")
-        self.process = subprocess.Popen([*command, "app-server", "--stdio"], stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=self.stderr, text=True, bufsize=1)
-        threading.Thread(target=self._read, daemon=True).start()
+        self.stderr = (self.workdir / "app_server_stderr.log").open("a", encoding="utf-8", newline="\n")
+        self.process = None
+        self.reader = None
         try:
+            self.process = subprocess.Popen([*command, "app-server"], stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=self.stderr, text=True,
+                                            encoding="utf-8", bufsize=1)
+            self.reader = threading.Thread(target=self._read, daemon=True)
+            self.reader.start()
             self.rpc("initialize", {"clientInfo": {"name": "simplevo", "version": "1"},
                                     "capabilities": {"experimentalApi": True}})
             self._send({"method": "initialized", "params": {}})
-            models = self.rpc("model/list", {"includeHidden": True})["data"]
-            selected = next((entry for entry in models if entry["model"] == model), None)
+            cursor, seen, selected = None, set(), None
+            while True:
+                page = self.rpc("model/list", {"includeHidden": True, "cursor": cursor})
+                selected = next((entry for entry in page["data"] if entry["model"] == model), None)
+                cursor = page.get("nextCursor")
+                if selected is not None or not cursor:
+                    break
+                if cursor in seen:
+                    raise RuntimeError("model/list repeated a pagination cursor")
+                seen.add(cursor)
             if selected is None or effort not in [e["reasoningEffort"] for e in selected["supportedReasoningEfforts"]]:
                 raise RuntimeError(f"{model}/{effort} is not available to this login")
         except Exception:
@@ -155,6 +167,12 @@ class CodexSession(ModelSession):
             method, data = event.get("method"), event.get("params", {})
             if data.get("threadId") not in (None, self.thread_id):
                 continue
+            event_turn = data.get("turnId", data.get("turn", {}).get("id"))
+            if event_turn not in (None, turn_id):
+                if "id" in event and method == "item/tool/call":
+                    self._send({"id": event["id"], "result": {"success": False, "contentItems": [
+                        {"type": "inputText", "text": "This call is from an inactive turn; no action executed."}]}})
+                continue
             if method == "thread/tokenUsage/updated":
                 self._take_usage(data)
             elif method == "item/tool/call" and "id" in event:
@@ -178,6 +196,8 @@ class CodexSession(ModelSession):
                 turn = data["turn"]
                 if turn["status"] == "completed":
                     return Turn("completed", messages)
+                if turn["status"] == "interrupted":
+                    return Turn("interrupted", messages)
                 return Turn("failed", messages, json.dumps(turn.get("error"), ensure_ascii=False))
         self._interrupt(turn_id)
         return Turn("failed", messages, "turn timed out")
@@ -204,7 +224,8 @@ class CodexSession(ModelSession):
             elif method == "item/tool/call" and "id" in event:
                 self._send({"id": event["id"], "result": {"success": False, "contentItems": [
                     {"type": "inputText", "text": "The episode has ended; this action was NOT executed."}]}})
-            elif method == "turn/completed" and data.get("threadId") == self.thread_id:
+            elif (method == "turn/completed" and data.get("threadId") == self.thread_id
+                  and data.get("turn", {}).get("id") == turn_id):
                 return
         raise RuntimeError("the model turn did not close")
 
@@ -215,11 +236,22 @@ class CodexSession(ModelSession):
         return error is not None and any(marker in error.lower() for marker in TRANSIENT)
 
     def close(self):
-        if self.process.poll() is None:
-            try:
+        try:
+            if self.process is not None:
+                if self.process.poll() is None:
+                    try:
+                        self.process.stdin.close()
+                        self.process.wait(timeout=5)
+                    except (subprocess.TimeoutExpired, OSError):
+                        self.process.terminate()
+                        try:
+                            self.process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            self.process.kill()
+                            self.process.wait(timeout=5)
+                if self.reader is not None:
+                    self.reader.join(timeout=5)
                 self.process.stdin.close()
-                self.process.wait(timeout=5)
-            except (subprocess.TimeoutExpired, OSError):
-                self.process.terminate()
-                self.process.wait(timeout=5)
-        self.stderr.close()
+                self.process.stdout.close()
+        finally:
+            self.stderr.close()

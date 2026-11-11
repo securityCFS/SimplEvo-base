@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+message: "If you use SimplEvo, please cite the paper below."
+title: "SimplEvo: Simple Memory Evolution for Embodied Agents"
+type: software
+license: MIT
+repository-code: "https://github.com/securityCFS/SimplEvo-base"
+authors:
+  - family-names: Yao
+    given-names: Yifei
+  - family-names: Zou
+    given-names: Yude
+  - family-names: Gao
+    given-names: Xing
+  - family-names: Jiao
+    given-names: Guanbo
+  - family-names: Wang
+    given-names: Yukai
+  - family-names: Ma
+    given-names: Jianming
+  - family-names: Zhang
+    given-names: Weinan
+  - family-names: Shen
+    given-names: Chunhua
+preferred-citation:
+  type: article
+  title: "Review the Episodes, Refine the Lessons: Simple Memory Evolution for Embodied Agents"
+  authors:
+    - family-names: Yao
+      given-names: Yifei
+    - family-names: Zou
+      given-names: Yude
+    - family-names: Gao
+      given-names: Xing
+    - family-names: Jiao
+      given-names: Guanbo
+    - family-names: Wang
+      given-names: Yukai
+    - family-names: Ma
+      given-names: Jianming
+    - family-names: Zhang
+      given-names: Weinan
+    - family-names: Shen
+      given-names: Chunhua
+  journal: "arXiv preprint arXiv:2611.11509"
+  year: 2026
+  url: "https://arxiv.org/abs/2611.11509"

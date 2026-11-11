@@ -22,6 +22,7 @@ from PIL import Image
 from .content import as_json, encode_png, image, text
 from .control import rotation_deg
 from .schema import problems, tool
+from .task import validate_names
 
 HEADER = "HISTORICAL DEMONSTRATION: a separate recorded episode, not the current scene; no environment step advanced."
 MAX_IMAGES = 8
@@ -45,30 +46,57 @@ class Demonstration:
     def __init__(self, instruction: str, poses: dict, grippers: dict, cameras, frame_reader, base=None):
         self.instruction = instruction
         self.arms = tuple(poses)
+        self.cameras = tuple(cameras)
+        try:
+            validate_names(self.arms, "arms")
+            validate_names(self.cameras, "cameras")
+        except ValueError as error:
+            raise DemonstrationError(str(error)) from error
+        if set(grippers) != set(self.arms):
+            raise DemonstrationError("poses and grippers must describe the same arms")
         self.poses = {arm: np.asarray(poses[arm], dtype=float) for arm in self.arms}
         self.grippers = {arm: np.asarray(grippers[arm], dtype=float) for arm in self.arms}
         self.base = None if base is None else np.asarray(base, dtype=float)
-        self.cameras = tuple(cameras)
         self.frame_reader = frame_reader
-        self.frames = len(next(iter(self.poses.values())))
+        first = next(iter(self.poses.values()))
+        if first.ndim != 2 or first.shape[0] < 1:
+            raise DemonstrationError("a demonstration needs at least one frame of poses shaped (N, 7)")
+        self.frames = first.shape[0]
         for arm in self.arms:
             if self.poses[arm].shape != (self.frames, 7) or self.grippers[arm].shape != (self.frames,):
                 raise DemonstrationError(f"{arm}: poses must be (N, 7) and grippers (N,) with one N for all arms")
+            if not np.isfinite(self.poses[arm]).all() or not np.isfinite(self.grippers[arm]).all():
+                raise DemonstrationError(f"{arm}: poses and grippers must be finite")
+            norms = np.linalg.norm(self.poses[arm][:, 3:], axis=1)
+            if not np.all(np.abs(norms - 1) <= 0.02):
+                raise DemonstrationError(f"{arm}: quaternions must be unit length")
+            if not np.all((self.grippers[arm] >= 0) & (self.grippers[arm] <= 1)):
+                raise DemonstrationError(f"{arm}: grippers must lie in [0, 1]")
+        if self.base is not None and (self.base.shape != (self.frames, 3) or not np.isfinite(self.base).all()):
+            raise DemonstrationError("base must be a finite array shaped (N, 3)")
 
     @classmethod
     def load(cls, folder: Path) -> "Demonstration":
         folder = Path(folder)
-        meta = json.loads((folder / "demo.json").read_text())
-        data = np.load(folder / "trajectory.npz")
-
+        meta = json.loads((folder / "demo.json").read_text(encoding="utf-8"))
         def read(camera, index):
-            return Image.open(folder / "frames" / camera / f"{index:06d}.png").convert("RGB")
-        return cls(meta["instruction"], {arm: data[f"pose_{arm}"] for arm in meta["arms"]},
-                   {arm: data[f"gripper_{arm}"] for arm in meta["arms"]}, meta["cameras"], read,
-                   data["base"] if "base" in data.files else None)
+            path = folder / "frames" / camera / f"{index:06d}.png"
+            if not path.is_file():
+                raise DemonstrationError(f"recording has no {camera} frame {index}; export all frames for annotation")
+            with Image.open(path) as picture:
+                return picture.convert("RGB")
+        with np.load(folder / "trajectory.npz", allow_pickle=False) as data:
+            demo = cls(meta["instruction"], {arm: data[f"pose_{arm}"] for arm in meta["arms"]},
+                       {arm: data[f"gripper_{arm}"] for arm in meta["arms"]}, meta["cameras"], read,
+                       data["base"] if "base" in data.files else None)
+        if demo.frames != meta["frames"]:
+            raise DemonstrationError("demo.json frame count does not match trajectory.npz")
+        return demo
 
     def save(self, folder: Path, every: int = 1) -> None:
         """Write the folder layout above, keeping every ``every``-th camera frame and the last one."""
+        if type(every) is not int or every < 1:
+            raise DemonstrationError("every must be a positive integer")
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         arrays = {f"pose_{arm}": self.poses[arm] for arm in self.arms}
@@ -77,7 +105,7 @@ class Demonstration:
             arrays["base"] = self.base
         np.savez_compressed(folder / "trajectory.npz", **arrays)
         (folder / "demo.json").write_text(json.dumps({"instruction": self.instruction, "arms": list(self.arms),
-                                                      "cameras": list(self.cameras), "frames": self.frames}, indent=1))
+                                                      "cameras": list(self.cameras), "frames": self.frames}, indent=1), encoding="utf-8", newline="\n")
         for camera in self.cameras:
             (folder / "frames" / camera).mkdir(parents=True, exist_ok=True)
             for index in sorted({*range(0, self.frames, every), self.frames - 1}):

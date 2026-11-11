@@ -49,7 +49,7 @@ class ModelSession(ABC):
         pass
 
 
-from .codex import CodexSession        # noqa: E402
+from .codex import CodexSession  # noqa: E402
 from .scripted import ScriptedSession  # noqa: E402
 
 __all__ = ["CodexSession", "ModelSession", "ScriptedSession", "ToolHandler", "ToolResult", "Turn"]

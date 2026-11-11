@@ -80,7 +80,7 @@ A chain:
     commits.jsonl              one line per committed episode with the state hash before and after
     committed/working_memory.md
     committed/attempts.jsonl   position, success, score, termination, index of key calls
-    committed/episodes/NNN/    archive of each episode (hard links)
+    committed/episodes/NNN/    independent copy of each episode's evidence
 
 A fixed memory: `working_memory.md`, `attempts.jsonl`, `view.json`, and the seal `fixed_memory.json`.
 
@@ -93,3 +93,9 @@ An episode:
     policy/result.json
     memory_view/               what this episode could read
     memory_staging/            its notes, their versions, the scratchpad, the log of memory calls
+
+Each chain has one writer. Views record their parent state hash; commits reject a stale parent and validate staged
+notes before changing committed state. Resume and sealing check commit/attempt positions, archive directories and
+the last committed hash. Multi-file commits are not database transactions: an interrupted commit requires manual
+inspection, and the runner refuses to continue or seal it silently. Hashes detect accidental changes; they are not
+signatures against someone who can rewrite both a snapshot and its seal.

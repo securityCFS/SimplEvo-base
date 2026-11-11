@@ -30,18 +30,30 @@ from .working_memory import CARRY
 
 
 def load_task(path: Path) -> TaskSpec:
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     robot = data["embodiment"]
     embodiment = Embodiment(robot["description"], tuple(robot.get("arms", ("left", "right"))),
                             tuple(robot.get("cameras", ("overview", "left_wrist", "right_wrist"))),
-                            bool(robot.get("has_base", False)), robot.get("max_waypoints", 6),
+                            robot.get("has_base", False), robot.get("max_waypoints", 6),
                             robot.get("max_steps", 64))
     return TaskSpec(data["name"], data["instruction"], embodiment, data.get("guidance", ""))
 
 
 def load_factory(name: str):
     module, _, function = name.partition(":")
-    return getattr(importlib.import_module(module), function)
+    if not module or not function or ":" in function:
+        raise ValueError("environment factory must have the form package.module:function")
+    factory = getattr(importlib.import_module(module), function)
+    if not callable(factory):
+        raise ValueError("environment factory must be callable")
+    return factory
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 def summary(records) -> dict:
@@ -70,8 +82,8 @@ def main(argv=None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     toy = commands.add_parser("toy")
     toy.add_argument("--out", type=Path, required=True)
-    toy.add_argument("--train", type=int, default=3, help="training scenes")
-    toy.add_argument("--test", type=int, default=3, help="test scenes")
+    toy.add_argument("--train", type=positive_int, default=3, help="training scenes")
+    toy.add_argument("--test", type=positive_int, default=3, help="test scenes")
     note = commands.add_parser("annotate")
     note.add_argument("--demo", type=Path, required=True)
     note.add_argument("--task", type=Path, required=True)
@@ -80,7 +92,8 @@ def main(argv=None) -> int:
     train = commands.add_parser("adapt")
     _episodes(train)
     train.add_argument("--chain", type=Path, required=True)
-    train.add_argument("--carry", choices=tuple(CARRY), default="lessons+outcomes")
+    train.add_argument("--carry", choices=tuple(CARRY),
+                       help="new chains default to lessons+outcomes; existing chains retain their setting")
     train.add_argument("--hide-outcome", action="store_true", help="reflection without the evaluator's result")
     seal = commands.add_parser("fix")
     seal.add_argument("--chain", type=Path, required=True)

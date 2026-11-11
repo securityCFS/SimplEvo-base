@@ -12,8 +12,20 @@ A benchmark is connected by implementing ``Environment`` and describing its robo
 """
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+
+def validate_names(names, kind: str) -> None:
+    """Names become state keys and file names; require distinct, portable components."""
+    if isinstance(names, str) or not names:
+        raise ValueError(f"{kind} must contain at least one name")
+    if any(not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) is None
+           for name in names):
+        raise ValueError(f"{kind} must be simple names containing letters, digits, '_' or '-'")
+    if len(set(names)) != len(names):
+        raise ValueError(f"{kind} must be unique")
 
 
 @dataclass(frozen=True)
@@ -31,8 +43,16 @@ class Embodiment:
     max_steps: int = 64           # environment steps per waypoint
 
     def __post_init__(self):
-        if not self.arms or not self.cameras:
-            raise ValueError("an embodiment needs at least one arm and one camera")
+        validate_names(self.arms, "arms")
+        validate_names(self.cameras, "cameras")
+        if set(self.arms) & {"base", "steps", "motion_steps", "env_steps_used"}:
+            raise ValueError("arm names must not use reserved action or state fields")
+        if type(self.has_base) is not bool:
+            raise ValueError("has_base must be a boolean")
+        for name in ("max_waypoints", "max_steps"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
 
 
 @dataclass(frozen=True)

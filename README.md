@@ -66,9 +66,15 @@ a benchmark.
 
 ## Quick start
 
+Python 3.10 or newer is required. The offline example runs on CPU. From a source checkout on Linux or macOS:
+
 ```bash
-pip install -e ".[test]"
-pytest                                   # offline: no simulator, no model, no credentials
+git clone https://github.com/securityCFS/SimplEvo-base.git
+cd SimplEvo-base
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test]"
+python -m pytest -q                     # offline: no simulator, no model, no credentials
 python -m simplevo toy --out runs/toy    # the whole loop on the toy tabletop
 ```
 
@@ -77,6 +83,14 @@ and runs the same test scenes again. A scripted stand-in plays the model, so the
 (prompts, tool calls, reflection, commits, the sealed memory) and nothing about model behaviour. Every episode
 folder under `runs/toy` holds the prompt, each tool call with the observation the model received, and the
 reflection record.
+
+With the default three training and three test scenes, the scripted example reports 0/3 successes before
+adaptation and 3/3 after fixing its memory. This is a deterministic software check, not a model result. Use a new
+`--out` directory for another run. For the Python API, run
+`python examples/toy_adaptation.py runs/toy_api`.
+
+Development checks, distribution checks and contribution guidance are in [CONTRIBUTING.md](CONTRIBUTING.md) and
+the [release checklist](docs/RELEASE.md).
 
 ## Using it with a model and a benchmark
 
@@ -97,6 +111,14 @@ python -m simplevo deploy --env my_adapter:make_env --task my_task.json --scenes
 The commands drive the model through the Codex CLI's app-server (`codex` must be installed and logged in). Another
 model is connected by implementing `simplevo.backends.ModelSession`: a persistent conversation with image input
 and tool calls whose results may contain images.
+
+Select a model and reasoning effort available to your account with `--model` and `--effort`; the default is
+`gpt-6-astra` with `high` effort. Unavailable choices are rejected rather than replaced. See the
+[adapter guide](docs/ADAPTER.md#codex-backend) for the installed-CLI check and the tested protocol version.
+Only one process may write each adaptation chain. Resuming an existing chain retains its carry setting; an
+explicit conflicting `--carry` value is rejected. Reused episode folders and incomplete commits require inspection.
+On resume, pass only the scenes you intend to run next: each supplied scene starts a new episode at the next chain
+position; completed scene identifiers are not automatically skipped.
 
 ## Information protocol
 

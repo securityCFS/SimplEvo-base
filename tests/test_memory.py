@@ -9,10 +9,17 @@ from simplevo.chain import fixed_view
 from simplevo.cli import main
 from simplevo.content import decode_png
 from simplevo.envs.toy import IDENTITY, TASK, ToyModel, ToyTabletop
-from simplevo.task_memory import TaskMemory
-from simplevo.working_memory import (MEMORY_TOOLS, REFLECTION_WRITES, MemoryRefusal, MemoryTools, guidance,
-                                     reflection_prompt, sha256)
 from simplevo.task import Outcome
+from simplevo.task_memory import TaskMemory
+from simplevo.working_memory import (
+    MEMORY_TOOLS,
+    REFLECTION_WRITES,
+    MemoryRefusal,
+    MemoryTools,
+    guidance,
+    reflection_prompt,
+    sha256,
+)
 
 
 def scripted(_):

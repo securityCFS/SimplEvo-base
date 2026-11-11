@@ -5,8 +5,8 @@
 Replace ``ToyTabletop`` with a benchmark adapter and ``ScriptedSession(ToyModel())`` with a model backend
 (for example ``CodexSession(folder)``) to run the same three phases for real.
 """
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from simplevo import AdaptationChain, adapt, deploy
 from simplevo.backends import ScriptedSession

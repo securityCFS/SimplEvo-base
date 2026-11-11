@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .backends import ModelSession, ToolResult
 from .content import encode_png, text
-from .demonstration import DEMO_TOOLS, DemoTools, Demonstration, DemonstrationError, tool_specs
+from .demonstration import DEMO_TOOLS, Demonstration, DemonstrationError, DemoTools, tool_specs
 from .schema import problems, tool
 from .task import Embodiment
 from .task_memory import TaskMemory
@@ -70,8 +70,14 @@ def validate(annotation: dict, demo: Demonstration, spec: dict) -> list[str]:
     frames, stages = demo.frames, annotation["stages"]
     if any(not 0 <= stage["start"] < stage["end"] <= frames for stage in stages):
         found.append(f"stage ranges must lie in [0, {frames}]")
-    if stages[0]["start"] > frames * 0.05 or stages[-1]["end"] < frames * 0.95:
+    if stages[0]["start"] != 0 or max(stage["end"] for stage in stages) != frames:
         found.append("stages must cover the demonstration from its start to its last frames")
+    covered, previous_start = 0, -1
+    for stage in stages:
+        if stage["start"] < previous_start or stage["start"] > covered:
+            found.append("stages must be in time order and cover the recording without gaps")
+            break
+        previous_start, covered = stage["start"], max(covered, stage["end"])
     if any(not 0 <= key["frame"] < frames for key in annotation["keyframes"]):
         found.append(f"keyframes must lie in [0, {frames})")
     if len({(key["frame"], key["camera"]) for key in annotation["keyframes"]}) != len(annotation["keyframes"]):
@@ -107,12 +113,14 @@ def annotate(session: ModelSession, demo: Demonstration, embodiment: Embodiment,
 
     def handle(name: str, arguments: dict) -> ToolResult:
         log.append({"tool": name, "arguments": arguments})
+        if "annotation" in submitted:
+            return ToolResult([text("An annotation has already been accepted.")], False, end_turn=True)
         if name == "submit_icl":
             found = validate(arguments, demo, spec)
             if found:
                 return ToolResult([text("Not accepted: " + "; ".join(found) + ". Fix and submit again.")], False)
             submitted["annotation"] = arguments
-            return ToolResult([text("Accepted. Reply 'done'.")])
+            return ToolResult([text("Annotation accepted.")], end_turn=True)
         if name not in DEMO_TOOLS:
             return ToolResult([text("Only the demonstration tools and submit_icl are available.")], False)
         try:
@@ -122,15 +130,15 @@ def annotate(session: ModelSession, demo: Demonstration, embodiment: Embodiment,
 
     prompt = PROMPT.format(robot=embodiment.description, instruction=demo.instruction, frames=demo.frames,
                            cameras=", ".join(demo.cameras))
-    (out / "prompt.txt").write_text(prompt + "\n")
+    (out / "prompt.txt").write_text(prompt + "\n", encoding="utf-8", newline="\n")
     session.start([*tool_specs(demo), spec])
     session.run_turn([text(prompt)], handle)
     if "annotation" not in submitted:
         session.run_turn([text(REMINDER)], handle)
-    (out / "calls.json").write_text(json.dumps(log, indent=1, ensure_ascii=False) + "\n")
+    (out / "calls.json").write_text(json.dumps(log, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     if "annotation" not in submitted:
         raise DemonstrationError("the annotator did not submit an annotation")
-    (out / "annotation.json").write_text(json.dumps(submitted["annotation"], indent=1, ensure_ascii=False) + "\n")
+    (out / "annotation.json").write_text(json.dumps(submitted["annotation"], indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     memory = render(submitted["annotation"], demo)
     memory.save(out)
     return memory

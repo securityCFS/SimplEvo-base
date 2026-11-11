@@ -2,13 +2,13 @@
 import json
 
 import numpy as np
-from PIL import Image
 import pytest
+from PIL import Image
 
 from simplevo.annotate import annotate, render, submit_spec, validate
 from simplevo.backends import ScriptedSession
 from simplevo.control import Controller, slerp, tool_specs
-from simplevo.demonstration import DemoTools, Demonstration, DemonstrationError, segment
+from simplevo.demonstration import Demonstration, DemonstrationError, DemoTools, segment
 from simplevo.envs.toy import EMBODIMENT, IDENTITY, ToyTabletop
 from simplevo.schema import problems
 from simplevo.task_memory import TaskMemory

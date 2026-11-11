@@ -1,4 +1,4 @@
-"""A stand-in for `codex app-server --stdio` that speaks the few JSON-RPC messages the backend uses.
+"""A stand-in for `codex app-server` that speaks the few JSON-RPC messages the backend uses.
 
 FAKE_CODEX_SCRIPT is a JSON list of turns: {"calls": [{"tool": ..., "arguments": ...}], "message": ...,
 "status": "completed" | "failed", "error": ...}. Everything received is appended to FAKE_CODEX_LOG.
@@ -33,6 +33,9 @@ while True:
     if method == "initialize":
         send({"id": message["id"], "result": {}})
     elif method == "model/list":
+        if os.environ.get("FAKE_CODEX_PAGINATE") and not message["params"].get("cursor"):
+            send({"id": message["id"], "result": {"data": [], "nextCursor": "page-2"}})
+            continue
         send({"id": message["id"], "result": {"data": [
             {"model": "gpt-6-astra", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}]}})
     elif method == "thread/start":
@@ -43,10 +46,13 @@ while True:
         number += 1
         turn = next(turns, {"calls": [], "message": "done"})
         send({"id": message["id"], "result": {"turn": {"id": f"turn-{number}"}}})
+        if turn.get("stale_completion"):
+            send({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": "turn-old", "status": "completed"}}})
         status = turn.get("status", "completed")
         for index, call in enumerate(turn["calls"]):
             send({"id": 9000 + 10 * number + index, "method": "item/tool/call", "params": {
-                "threadId": "thread-1", "callId": f"call-{number}-{index}", **call}})
+                "threadId": "thread-1", "turnId": f"turn-{number}", "callId": f"call-{number}-{index}", **call}})
             reply = read()
             if any('"episode_ended": true' in item.get("text", "") for item in reply["result"]["contentItems"]):
                 interrupt = read()                    # the harness ends the turn

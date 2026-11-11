@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .schema import tool
+from .schema import problems, tool
 from .task import Embodiment, Environment
 
 
@@ -21,8 +21,12 @@ def _vector(value, length: int, name: str) -> np.ndarray:
 
 
 def unit(quaternion) -> np.ndarray:
-    quaternion = np.asarray(quaternion, dtype=float)
-    return quaternion / np.linalg.norm(quaternion)
+    quaternion = _vector(quaternion, 4, "quaternion")
+    scale = np.max(np.abs(quaternion))
+    if scale == 0:
+        raise ValueError("quaternion must have nonzero length")
+    scaled = quaternion / scale
+    return scaled / np.linalg.norm(scaled)
 
 
 def slerp(start, end, alpha: float) -> np.ndarray:
@@ -103,6 +107,18 @@ class Controller:
         state = env.state()
         self.grippers = {arm: float(state[arm]["gripper"]) for arm in self.embodiment.arms}  # last commands
         self.waypoints = 0
+        self.waypoint_schema = tool_specs(self.embodiment)[0]["inputSchema"]["properties"]["waypoints"]
+
+    def _validate_waypoint(self, waypoint: dict) -> None:
+        found = problems(waypoint, self.waypoint_schema["items"])
+        if found:
+            raise ValueError("; ".join(found[:5]))
+        if waypoint.get("motion_steps", 0) > waypoint["steps"]:
+            raise ValueError("motion_steps must be between 0 and steps")
+        for arm in self.embodiment.arms:
+            wanted = waypoint[arm]
+            if wanted is not None and abs(np.linalg.norm(wanted["quaternion_wxyz"]) - 1) > 0.02:
+                raise ValueError("quaternions must be unit length (small rounding error is normalized)")
 
     def _measured(self):
         state = self.env.state()
@@ -141,9 +157,8 @@ class Controller:
     def waypoint_actions(self, waypoint: dict) -> tuple[list[dict], dict]:
         """Per-step targets of one waypoint: a ramp from the measured pose over ``motion_steps`` (0 = the target
         at once), then the target held for the rest of ``steps``. Gripper commands apply from the first step."""
+        self._validate_waypoint(waypoint)
         steps, motion = waypoint["steps"], waypoint.get("motion_steps", 0)
-        if motion > steps:
-            raise ValueError("motion_steps must be between 0 and steps")
         arms, base = self._measured()
         target = self._target(waypoint, arms, base)
         actions = []
@@ -164,6 +179,13 @@ class Controller:
 
     def execute(self, arguments: dict) -> list[dict]:
         """Run the waypoints of one ``execute_eef`` call; returns one summary per started waypoint."""
+        found = problems(arguments["waypoints"], self.waypoint_schema)
+        if found:
+            raise ValueError("; ".join(found[:5]))
+        # Validate the whole request before the first motion. Each ramp still starts
+        # from the measured state after the preceding waypoint has executed.
+        for waypoint in arguments["waypoints"]:
+            self._validate_waypoint(waypoint)
         summaries = []
         for index, waypoint in enumerate(arguments["waypoints"]):
             if self.env.ended:
@@ -189,10 +211,12 @@ class Controller:
         held = 0
         while not self.env.ended and held < limit:
             arms, base = self._measured()
-            executed = self.env.step([self._hold(arms, base, self.grippers) for _ in range(chunk)])
-            if executed <= 0:
-                break
+            executed = self.env.step([self._hold(arms, base, self.grippers) for _ in range(min(chunk, limit - held))])
+            if executed < 0 or (executed == 0 and not self.env.ended):
+                raise RuntimeError("environment made no progress before a terminal outcome")
             held += executed
+        if not self.env.ended or self.env.outcome is None:
+            raise RuntimeError("environment has not ended with a terminal outcome")
         return held
 
 

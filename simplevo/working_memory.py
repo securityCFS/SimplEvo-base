@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import re
 import shutil
 import time
+from pathlib import Path
 
 from PIL import Image
 
@@ -76,7 +76,7 @@ def episode_calls(policy: Path) -> list[int]:
 
 
 def _load(path: Path, default=None):
-    return json.loads(path.read_text()) if path.exists() else default
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
 def call_event(policy: Path, number: int) -> dict:
@@ -104,9 +104,9 @@ def key_calls(policy: Path, arms) -> dict:
     for number in episode_calls(policy):
         event = call_event(policy, number)
         arguments = event["arguments"] if isinstance(event["arguments"], dict) else {}
-        if event["tool"] == "set_gripper" and arguments.get("side") in closed:
+        if event["success"] and event["tool"] == "set_gripper" and arguments.get("side") in closed:
             command(arguments["side"], arguments.get("opening", 1), number)
-        elif event["tool"] == "execute_eef":
+        elif event["success"] and event["tool"] == "execute_eef":
             for waypoint in arguments.get("waypoints", []):
                 for arm in arms:
                     if isinstance(waypoint.get(arm), dict) and "gripper" in waypoint[arm]:
@@ -219,7 +219,7 @@ class MemoryTools:
 
     def __init__(self, view: Path, policy: Path, staging: Path, cameras):
         self.view, self.policy, self.staging = Path(view), Path(policy), Path(staging)
-        meta = json.loads((self.view / "view.json").read_text())
+        meta = json.loads((self.view / "view.json").read_text(encoding="utf-8"))
         self.carry, self.position = meta["carry"], meta["position"]
         self.visible, self.notes_limit = meta["visible_positions"], meta["notes_limit"]
         if self.visible and not CARRY[self.carry]["archive"]:
@@ -240,7 +240,7 @@ class MemoryTools:
         self.reflecting = True
 
     def notes(self) -> str:
-        return (self.staging / NOTES_FILE).read_text()
+        return (self.staging / NOTES_FILE).read_text(encoding="utf-8")
 
     def call(self, name: str, arguments: dict, call_number=None) -> list[dict]:
         if name not in self.specs:
@@ -252,7 +252,7 @@ class MemoryTools:
         record = {"time": time.time(), "tool": name, "position": self.position, "call": call_number,
                   "reflection": self.reflecting, "notes_sha256": sha256(self.notes().encode()),
                   "arguments": {k: (f"<{len(v)} chars>" if k == "content" else v) for k, v in arguments.items()}}
-        with (self.staging / "memory_calls.jsonl").open("a") as stream:
+        with (self.staging / "memory_calls.jsonl").open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(json.dumps(record) + "\n")
         return content
 
@@ -277,15 +277,15 @@ class MemoryTools:
         versions = self.staging / "versions"
         versions.mkdir(exist_ok=True)
         name = f"{len(list(versions.iterdir())) + 1:03d}{'_reflection' if self.reflecting else ''}.md"
-        (versions / name).write_text(arguments["content"])
+        (versions / name).write_text(arguments["content"], encoding="utf-8", newline="\n")
         temporary = self.staging / (NOTES_FILE + ".tmp")
-        temporary.write_text(arguments["content"])
+        temporary.write_text(arguments["content"], encoding="utf-8", newline="\n")
         temporary.replace(self.staging / NOTES_FILE)
         return [as_json({"saved": True, "sha256": sha256(arguments["content"].encode())})]
 
     def _read_working(self, _):
         path = self.staging / "scratchpad.md"
-        return [text(path.read_text() if path.exists() else "")]
+        return [text(path.read_text(encoding="utf-8") if path.exists() else "")]
 
     def _write_working(self, arguments):
         if self.reflecting:
@@ -301,7 +301,7 @@ class MemoryTools:
         if arguments["view"] == "attempts":
             rows = []
             if CARRY[self.carry]["attempts"]:
-                rows = [json.loads(line) for line in (self.view / "attempts.jsonl").read_text().splitlines() if line]
+                rows = [json.loads(line) for line in (self.view / "attempts.jsonl").read_text(encoding="utf-8").splitlines() if line]
             rows.append({"position": self.position, "status": "this attempt" + (" (ended)" if self.reflecting else "")})
             return [as_json({"attempts": rows[start:start + limit], "total": len(rows)})]
         policy = self._episode(arguments["episode"])
@@ -351,5 +351,5 @@ class MemoryTools:
         calls = [call for call in calls if (_observation(policy, call) / "state.json").exists()]
         page = calls[arguments["start"]:arguments["start"] + arguments["limit"]]
         return [as_json({"episode": arguments["episode"], "total": len(calls), "states": [
-            {"call": call, "state": json.loads((_observation(policy, call) / "state.json").read_text())}
+            {"call": call, "state": json.loads((_observation(policy, call) / "state.json").read_text(encoding="utf-8"))}
             for call in page]})]

@@ -21,7 +21,11 @@ def problems(value, schema: dict, path: str = "$") -> list[str]:
     found = []
     if kind in ("integer", "number"):
         allowed = int if kind == "integer" else (int, float)
-        if isinstance(value, bool) or not isinstance(value, allowed) or not math.isfinite(value):
+        try:
+            finite = math.isfinite(value) if isinstance(value, allowed) else False
+        except OverflowError:
+            finite = False
+        if isinstance(value, bool) or not finite:
             return [f"{path}: must be a finite {kind}"]
         if "minimum" in schema and value < schema["minimum"]:
             found.append(f"{path}: must be >= {schema['minimum']}")
