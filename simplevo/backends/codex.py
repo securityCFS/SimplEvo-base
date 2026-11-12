@@ -1,8 +1,10 @@
 """Model backend over the Codex app-server (JSON-RPC on stdio), with the harness's tools as dynamic tools.
 
-The conversation is one ephemeral thread without shell, web search, project documents or sub-agents, so the model
-can act only through the declared tools. Authentication is whatever the ``codex`` CLI is logged in with (its
-``CODEX_HOME``); this module never reads or stores credentials.
+The model session uses an ephemeral, read-only thread with shell, web search, automatic project-document loading
+and sub-agents disabled. Robot and memory tools execute in the Python host, with host permissions; their handlers
+implement the observation and write boundaries. See docs/ADAPTER.md#sandbox-boundary for the two execution scopes.
+Authentication is whatever the ``codex`` CLI is logged in with (its ``CODEX_HOME``); this module never reads or
+stores credentials.
 """
 from __future__ import annotations
 
@@ -141,6 +143,8 @@ class CodexSession(ModelSession):
     # ------------------------------------------------------------------ ModelSession
 
     def start(self, tools, instructions=None):
+        # Model-session policy. Dynamic tools run in the host via run_turn's handler, so robot actions and
+        # bounded memory writes remain available. cwd selects the session directory, not a filesystem jail.
         params = {"model": self.model, "ephemeral": True, "sandbox": "read-only", "approvalPolicy": "never",
                   "cwd": str(self.workdir.resolve()),
                   "config": {"model_reasoning_effort": self.effort, "project_doc_max_bytes": 0,

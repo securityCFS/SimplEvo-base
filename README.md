@@ -171,6 +171,22 @@ Select a model and reasoning effort available to your account with `--model` and
 Run one writer per adaptation chain. Resuming a chain retains its carry setting and appends each supplied scene
 as a new episode. Pass the scenes you want to run next; see [CONTRIBUTING.md](CONTRIBUTING.md) for resuming a run.
 
+## Agent sandbox
+
+SimplEvo separates the model session from the host-side environment and memory tools. Each episode opens a
+fresh, ephemeral Codex thread with a **read-only sandbox**, approvals disabled, and shell execution, web search,
+sub-agents and automatic project-document loading turned off. The backend registers the task's tools explicitly;
+the runner validates their arguments and dispatches robot actions, observations and memory operations.
+
+The Python host executes these tools with its own permissions: it steps the environment, returns RGB images and
+proprioception, and writes the model's lessons through bounded memory tools. This is how the model controls the
+robot and evolves memory from a read-only session. After an adaptation episode, the reflection handler accepts
+only memory tools; during deployment, each episode uses a private copy of the sealed memory.
+
+The sandbox policy is set in [`CodexSession.start`](simplevo/backends/codex.py); tool dispatch and the reflection
+boundary are in [`agent.py`](simplevo/agent.py). See the [adapter guide](docs/ADAPTER.md#sandbox-boundary) for the
+scope of the session sandbox and the host adapter's responsibilities.
+
 ## Information protocol
 
 The observation interface consists of RGB images from the robot's cameras and measured proprioception. The

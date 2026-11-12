@@ -120,3 +120,37 @@ Use an installed, configured Codex CLI with access to the selected model. `SIMPL
 executable command. The backend uses the CLI's current login; it does not read credentials into the package.
 Its tests use a fake local server and need no login. A successful protocol check establishes the handshake and
 tool registration only; a model-backed robot episode still needs validation with the selected model and adapter.
+
+## Sandbox boundary
+
+The Codex backend creates a fresh ephemeral thread per episode, rooted at the episode's session directory.
+`CodexSession.start` sends the following policy with `thread/start`:
+
+| Setting | Value | Purpose |
+|---|---|---|
+| `sandbox` | `read-only` | Run the model session under the CLI's read-only filesystem policy |
+| `approvalPolicy` | `never` | Keep execution within that policy without approval escalation |
+| `features.shell_tool` | `false` | Disable the model's shell tool |
+| `web_search` | `disabled` | Disable built-in web search |
+| `features.multi_agent` | `false` | Disable sub-agent delegation |
+| `project_doc_max_bytes` | `0` | Turn off automatic project-document loading |
+| `ephemeral` | `true` | Use a transient thread; SimplEvo records episode evidence itself |
+
+The session directory gives the thread its working directory. Filesystem read visibility follows the installed
+CLI's sandbox policy; `cwd` is not a filesystem root or a container boundary. The app-server uses the current
+CLI login and installation configuration. The switches above describe the capabilities this backend explicitly
+configures.
+
+Environment adapters and dynamic tool handlers execute in the Python host, outside the model session's sandbox.
+The host owns simulator access, demonstration loading, trajectory logs and memory files. Model-facing handlers
+expose these resources through structured arguments and returned text/images. Keep privileged simulator state
+inside the adapter and implement the observation contract above. The read-only model policy leaves host-side
+robot execution and bounded memory writes available through these handlers.
+
+`agent.run_episode` validates control arguments before dispatch. `agent._reflect` accepts only memory tool calls
+after the episode; `MemoryTools` enforces write and inspection budgets and the chain's evidence visibility.
+Deployment uses a private memory view and validates the sealed snapshot after each episode. These host-side
+checks implement the information and memory boundaries independently of the model's instructions.
+
+When adding another `ModelSession` backend, configure its session capabilities explicitly and preserve the same
+host-side tool dispatch. The Codex-specific sandbox switches apply to `CodexSession`.
