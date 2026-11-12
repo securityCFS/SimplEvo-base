@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["numpy>=1.24,<3", "Pillow>=10,<13"]
+dependencies = ["numpy>=1.24,<3", "Pillow>=10,<13", "PyYAML>=6.0.2,<7"]
 keywords = ["robotics", "embodied-ai", "memory", "multimodal"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -31,6 +31,9 @@ dev = ["pytest>=8,<10", "build>=1.2,<2", "ruff>=0.11,<1", "twine>=6,<7"]
 
 [project.scripts]
 simplevo = "simplevo.cli:main"
+
+[tool.setuptools.package-data]
+simplevo = ["defaults.yaml"]
 
 [tool.setuptools.packages.find]
 include = ["simplevo*"]

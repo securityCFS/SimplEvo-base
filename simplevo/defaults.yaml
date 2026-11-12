@@ -1,0 +1,47 @@
+# Copy this file and pass --config PATH after any command.
+# Command-line flags override YAML. All sizes below are UTF-8 bytes or pixels.
+model:
+  name: gpt-6-astra
+  effort: high
+  rpc_timeout_s: 60.0
+  turn_timeout_s: null  # null: wait until the model finishes
+
+episode:
+  retries: 8
+  retry_initial_s: 15.0
+  retry_max_s: 300.0
+  show_outcome: true
+
+memory:
+  carry: lessons+outcomes
+  notes_limit: 32768
+  scratch_limit: 16384
+  max_inspect_images: 4
+  max_inspect_pixels: 1250000
+  max_inspect_calls: 20  # separately for current and archived frames
+  max_inspect_side: 640
+  history_page: 32
+  state_page: 8
+  reflection_calls: 20
+  reflection_writes: 2
+
+demonstration:
+  max_images: 8
+  max_action_rows: 8
+  max_action_span: 600
+  preview_px: 384
+
+segmentation:
+  moving_m: 0.0006  # translation per recorded frame
+  moving_rad: 0.005  # rotation per recorded frame
+  smooth: 7
+  persist: 6
+  gap: 30
+
+annotation:
+  max_keyframes: 16
+  max_stages: 24
+
+toy:
+  train: 3
+  test: 3

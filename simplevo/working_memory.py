@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from .config import DEFAULTS
 from .content import as_json, encode_png, image, text
 from .schema import problems, tool
 
@@ -36,16 +37,16 @@ CARRY = {
     "lessons+outcomes": {"notes": True, "attempts": True, "archive": False},
     "lessons+outcomes+frames": {"notes": True, "attempts": True, "archive": True},  # visual evidence too
 }
-NOTES_LIMIT = 32768          # B, bytes of UTF-8
-SCRATCH_LIMIT = 16384
-MAX_INSPECT_IMAGES = 4
-MAX_INSPECT_PIXELS = 1_250_000
-MAX_INSPECT_CALLS = 20       # per episode and per source (this episode's frames; earlier episodes' frames)
-MAX_INSPECT_SIDE = 640
-HISTORY_PAGE = 32
-STATE_PAGE = 8
-REFLECTION_CALLS = 20
-REFLECTION_WRITES = 2
+NOTES_LIMIT = DEFAULTS["memory"]["notes_limit"]
+SCRATCH_LIMIT = DEFAULTS["memory"]["scratch_limit"]
+MAX_INSPECT_IMAGES = DEFAULTS["memory"]["max_inspect_images"]
+MAX_INSPECT_PIXELS = DEFAULTS["memory"]["max_inspect_pixels"]
+MAX_INSPECT_CALLS = DEFAULTS["memory"]["max_inspect_calls"]
+MAX_INSPECT_SIDE = DEFAULTS["memory"]["max_inspect_side"]
+HISTORY_PAGE = DEFAULTS["memory"]["history_page"]
+STATE_PAGE = DEFAULTS["memory"]["state_page"]
+REFLECTION_CALLS = DEFAULTS["memory"]["reflection_calls"]
+REFLECTION_WRITES = DEFAULTS["memory"]["reflection_writes"]
 MEMORY_TOOLS = ("read_task_notes", "write_task_notes", "read_working", "write_working", "history", "inspect",
                 "read_state_history")
 NOTES_FILE = "working_memory.md"
@@ -124,7 +125,8 @@ def _observation(policy: Path, call) -> Path:
 
 # ----------------------------------------------------------------------------- the memory tools
 
-def tool_specs(notes_limit: int, cameras) -> list[dict]:
+def tool_specs(notes_limit: int, cameras, limits: dict | None = None) -> list[dict]:
+    limits = DEFAULTS["memory"] if limits is None else limits
     episode = {"anyOf": [{"type": "string", "enum": ["current"]}, {"type": "integer", "minimum": 1}],
                "description": "'current' or an earlier attempt number of this task (see history view='attempts')."}
     call = {"anyOf": [{"type": "string", "enum": ["initial"]}, {"type": "integer", "minimum": 1}],
@@ -146,30 +148,30 @@ def tool_specs(notes_limit: int, cameras) -> list[dict]:
              "expected_sha256": {"type": "string", "maxLength": 64}}),
         tool("read_working", "Read this attempt's scratchpad (current state, plan, open checks).", {}),
         tool("write_working", (
-            f"Replace this attempt's scratchpad (at most {SCRATCH_LIMIT} bytes). Keep it current: your conversation "
+            f"Replace this attempt's scratchpad (at most {limits['scratch_limit']} bytes). Keep it current: your conversation "
             "may be compacted during a long attempt. It is not carried to later attempts."),
-            {"content": {"type": "string", "maxLength": SCRATCH_LIMIT}}),
+            {"content": {"type": "string", "maxLength": limits['scratch_limit']}}),
         tool("history", (
             "Exact records. view='attempts' lists the attempts at this task you may see (earlier ones with their "
             "official outcome and an index of key calls); view='events' lists one attempt's tool calls in order "
-            f"(tool, arguments, success, environment steps, saved frames), a page of at most {HISTORY_PAGE} from "
+            f"(tool, arguments, success, environment steps, saved frames), a page of at most {limits['history_page']} from "
             "'start'."),
             {"view": {"type": "string", "enum": ["attempts", "events"]}, "episode": episode,
              "start": {"type": "integer", "minimum": 0},
-             "limit": {"type": "integer", "minimum": 1, "maximum": HISTORY_PAGE}}),
+             "limit": {"type": "integer", "minimum": 1, "maximum": limits['history_page']}}),
         tool("inspect", (
             "Return ARCHIVED RGB frames you received earlier (this attempt, or earlier attempts where available), "
-            f"optionally cropped to a normalized region [x0, y0, x1, y1] and enlarged up to {MAX_INSPECT_SIDE} px. "
-            f"At most {MAX_INSPECT_IMAGES} images and {MAX_INSPECT_PIXELS} pixels per call; {MAX_INSPECT_CALLS} "
+            f"optionally cropped to a normalized region [x0, y0, x1, y1] and enlarged up to {limits['max_inspect_side']} px. "
+            f"At most {limits['max_inspect_images']} images and {limits['max_inspect_pixels']} pixels per call; {limits['max_inspect_calls']} "
             "calls per attempt for this attempt's frames and as many for earlier attempts' frames. Archived frames "
             "show the past, not the current scene; use observe for the current scene."),
             {"question": {"type": "string", "maxLength": 300},
-             "views": {"type": "array", "minItems": 1, "maxItems": MAX_INSPECT_IMAGES, "items": view}}),
+             "views": {"type": "array", "minItems": 1, "maxItems": limits['max_inspect_images'], "items": view}}),
         tool("read_state_history", (
             "Measured robot state recorded with each observation of one attempt, a page of at most "
-            f"{STATE_PAGE} from 'start' (index 0 is the initial observation). No object poses."),
+            f"{limits['state_page']} from 'start' (index 0 is the initial observation). No object poses."),
             {"episode": episode, "start": {"type": "integer", "minimum": 0},
-             "limit": {"type": "integer", "minimum": 1, "maximum": STATE_PAGE}}),
+             "limit": {"type": "integer", "minimum": 1, "maximum": limits['state_page']}}),
     ]
 
 
@@ -196,7 +198,7 @@ def guidance(position: int, carry: str, fixed: bool = False) -> str:
             f"actually changed. Notes are hypotheses: verify them against the current views. {ending}")
 
 
-def reflection_prompt(outcome, held: bool, show_outcome: bool = True) -> str:
+def reflection_prompt(outcome, held: bool, show_outcome: bool = True, writes: int = REFLECTION_WRITES) -> str:
     """The message that opens the reflection turn. ``show_outcome=False`` withholds the evaluator's result."""
     result = (f"Official result from the evaluation server: success={1.0 if outcome and outcome.success else 0.0}, "
               f"score={outcome.score if outcome else None}." if show_outcome else
@@ -205,7 +207,7 @@ def reflection_prompt(outcome, held: bool, show_outcome: bool = True) -> str:
               "ended the episode." if held else "")
     return (f"The episode has ended. {result}{ending} No robot action is possible now; only the memory tools work. "
             f"Review this attempt if useful, then update your task notes with write_task_notes (at most "
-            f"{REFLECTION_WRITES} writes) so that later attempts at this task in other scenes do better: what "
+            f"{writes} writes) so that later attempts at this task in other scenes do better: what "
             "worked, what failed and the evidence (attempt and call numbers). Keep the notes reusable and "
             "revisable. Reply with one short sentence when done.")
 
@@ -217,7 +219,8 @@ class MemoryTools:
     ``staging``: a writable folder of this episode, where its notes and scratchpad are kept until the commit.
     """
 
-    def __init__(self, view: Path, policy: Path, staging: Path, cameras):
+    def __init__(self, view: Path, policy: Path, staging: Path, cameras, *, limits: dict | None = None):
+        self.limits = dict(DEFAULTS["memory"] if limits is None else limits)
         self.view, self.policy, self.staging = Path(view), Path(policy), Path(staging)
         meta = json.loads((self.view / "view.json").read_text(encoding="utf-8"))
         self.carry, self.position = meta["carry"], meta["position"]
@@ -234,7 +237,7 @@ class MemoryTools:
         self.reflection_writes = 0
 
     def tool_specs(self) -> list[dict]:
-        return tool_specs(self.notes_limit, self.cameras)
+        return tool_specs(self.notes_limit, self.cameras, self.limits)
 
     def start_reflection(self) -> None:
         self.reflecting = True
@@ -268,8 +271,8 @@ class MemoryTools:
         return [as_json({"sha256": sha256(notes.encode()), "notes": notes})]
 
     def _write_task_notes(self, arguments):
-        if self.reflecting and self.reflection_writes >= REFLECTION_WRITES:
-            raise MemoryRefusal(f"at most {REFLECTION_WRITES} note writes after the episode; nothing was saved")
+        if self.reflecting and self.reflection_writes >= self.limits['reflection_writes']:
+            raise MemoryRefusal(f"at most {self.limits['reflection_writes']} note writes after the episode; nothing was saved")
         if arguments["expected_sha256"] != sha256(self.notes().encode()):
             raise MemoryRefusal("expected_sha256 does not match the current notes; read them again first")
         check_size(arguments["content"], self.notes_limit)
@@ -291,8 +294,8 @@ class MemoryTools:
         if self.reflecting:
             raise MemoryRefusal("the scratchpad is closed after the episode; update the task notes instead")
         data = arguments["content"].encode("utf-8")
-        if len(data) > SCRATCH_LIMIT:
-            raise MemoryRefusal(f"scratchpad is {len(data)} bytes; the limit is {SCRATCH_LIMIT}; nothing was saved")
+        if len(data) > self.limits['scratch_limit']:
+            raise MemoryRefusal(f"scratchpad is {len(data)} bytes; the limit is {self.limits['scratch_limit']}; nothing was saved")
         (self.staging / "scratchpad.md").write_bytes(data)
         return [as_json({"saved": True, "bytes": len(data)})]
 
@@ -312,8 +315,8 @@ class MemoryTools:
     def _inspect(self, arguments):
         sources = {"current" if view["episode"] == "current" else "archived" for view in arguments["views"]}
         for source in sources:
-            if self.inspect_calls[source] >= MAX_INSPECT_CALLS:
-                raise MemoryRefusal(f"the {source}-frame inspect budget of {MAX_INSPECT_CALLS} calls is used up")
+            if self.inspect_calls[source] >= self.limits['max_inspect_calls']:
+                raise MemoryRefusal(f"the {source}-frame inspect budget of {self.limits['max_inspect_calls']} calls is used up")
         pictures, pixels = [], 0
         for view in arguments["views"]:
             path = _observation(self._episode(view["episode"]), view["call"]) / f"{view['camera']}.png"
@@ -328,14 +331,14 @@ class MemoryTools:
                 left, top = int(x0 * picture.width), int(y0 * picture.height)
                 box = (left, top, max(left + 1, round(x1 * picture.width)), max(top + 1, round(y1 * picture.height)))
                 picture = picture.crop(box)
-            scale = min(2.0, MAX_INSPECT_SIDE / max(picture.size))
+            scale = min(2.0, self.limits['max_inspect_side'] / max(picture.size))
             if scale > 1:
                 picture = picture.resize((round(picture.width * scale), round(picture.height * scale)),
                                          Image.Resampling.LANCZOS)
             pixels += picture.width * picture.height
             pictures.append((view, box, picture))
-        if pixels > MAX_INSPECT_PIXELS:
-            raise MemoryRefusal(f"{pixels} pixels requested; the limit is {MAX_INSPECT_PIXELS} per call")
+        if pixels > self.limits['max_inspect_pixels']:
+            raise MemoryRefusal(f"{pixels} pixels requested; the limit is {self.limits['max_inspect_pixels']} per call")
         for source in sources:
             self.inspect_calls[source] += 1
         content = []

@@ -16,6 +16,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from ..config import DEFAULTS
 from ..content import data_url
 from . import ModelSession, Turn
 
@@ -50,8 +51,9 @@ def _wire(item: dict, result: bool) -> dict:
 
 
 class CodexSession(ModelSession):
-    def __init__(self, workdir: Path, *, model: str = "gpt-6-astra", effort: str = "high",
-                 executable: str | None = None, rpc_timeout_s: float = 60, turn_timeout_s: float | None = None):
+    def __init__(self, workdir: Path, *, model: str = DEFAULTS["model"]["name"], effort: str = DEFAULTS["model"]["effort"],
+                 executable: str | None = None, rpc_timeout_s: float = DEFAULTS["model"]["rpc_timeout_s"],
+                 turn_timeout_s: float | None = DEFAULTS["model"]["turn_timeout_s"]):
         self.workdir = Path(workdir)
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.model, self.effort = model, effort

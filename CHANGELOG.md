@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a packaged YAML configuration for model settings, retries, memory and reflection budgets,
+  demonstration tools, motion segmentation, annotation and toy runs.
+- Accept `--config` on CLI commands and `config=` in the episode and annotation APIs; save resolved
+  settings with each episode and annotation.
+- Add paper author affiliations, equal-contribution and corresponding-author markers, and arXiv/PDF/video badges.
+
+
+## Unreleased
+
 - Stop cancelled live episodes and propagate environment failures after motion, preserving the partial episode
   evidence for inspection.
 - Validate every waypoint before starting a motion batch, including quaternion and motion-duration checks.

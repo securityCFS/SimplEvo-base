@@ -12,14 +12,15 @@ import json
 from pathlib import Path
 
 from .backends import ModelSession, ToolResult
+from .config import DEFAULTS, resolve_config, save_config
 from .content import encode_png, text
 from .demonstration import DEMO_TOOLS, Demonstration, DemonstrationError, DemoTools, tool_specs
 from .schema import problems, tool
 from .task import Embodiment
 from .task_memory import TaskMemory
 
-MAX_KEYFRAMES = 16
-MAX_STAGES = 24
+MAX_KEYFRAMES = DEFAULTS["annotation"]["max_keyframes"]
+MAX_STAGES = DEFAULTS["annotation"]["max_stages"]
 SECTIONS = ("arm_roles", "observed_sequence", "observed_outcome", "evidence_limits")
 PROMPT = """You are annotating one recorded robot demonstration so that a robot agent can learn from it later.
 The robot: {robot} Task instruction: "{instruction}". The demonstration has {frames} frames (one frame is one
@@ -37,14 +38,15 @@ must be true at the end. Do not mention datasets, splits or scores."""
 REMINDER = "You have not called submit_icl yet. Finish your review if needed and call submit_icl once."
 
 
-def submit_spec(demo: Demonstration, has_base: bool = False) -> dict:
+def submit_spec(demo: Demonstration, has_base: bool = False, limits: dict | None = None) -> dict:
+    limits = DEFAULTS["annotation"] if limits is None else limits
     parts = [*demo.arms, *(["both"] if len(demo.arms) == 2 else []), *(["base"] if has_base else []), "none"]
     return tool("submit_icl", (
         "Submit the annotation once you have reviewed the whole demonstration. Stages in time order cover the "
         "demonstration from its first to its last frame, including any final operation (closing, releasing, "
-        f"withdrawing). Keyframes (at most {MAX_KEYFRAMES}) each illustrate a stage; pick the camera that shows "
+        f"withdrawing). Keyframes (at most {limits['max_keyframes']}) each illustrate a stage; pick the camera that shows "
         "that stage best."), {
-        "stages": {"type": "array", "minItems": 1, "maxItems": MAX_STAGES, "items": {
+        "stages": {"type": "array", "minItems": 1, "maxItems": limits['max_stages'], "items": {
             "type": "object", "additionalProperties": False,
             "required": ["label", "start", "end", "arms", "what_changes", "certainty"],
             "properties": {"label": {"type": "string", "maxLength": 120},
@@ -52,7 +54,7 @@ def submit_spec(demo: Demonstration, has_base: bool = False) -> dict:
                            "arms": {"type": "string", "enum": parts},
                            "what_changes": {"type": "string", "maxLength": 300},
                            "certainty": {"type": "string", "enum": ["seen", "inferred", "uncertain"]}}}},
-        "keyframes": {"type": "array", "minItems": 3, "maxItems": MAX_KEYFRAMES, "items": {
+        "keyframes": {"type": "array", "minItems": 3, "maxItems": limits['max_keyframes'], "items": {
             "type": "object", "additionalProperties": False, "required": ["frame", "camera", "label"],
             "properties": {"frame": {"type": "integer", "minimum": 0},
                            "camera": {"type": "string", "enum": list(demo.cameras)},
@@ -102,13 +104,16 @@ def render(annotation: dict, demo: Demonstration) -> TaskMemory:
     return TaskMemory(body, keyframes)
 
 
-def annotate(session: ModelSession, demo: Demonstration, embodiment: Embodiment, out: Path) -> TaskMemory:
+def annotate(session: ModelSession, demo: Demonstration, embodiment: Embodiment, out: Path, *, config: dict | None = None) -> TaskMemory:
     """Run the annotator on ``demo`` and save the annotation and the task memory under ``out``."""
+    config = resolve_config(config)
     out = Path(out)
     if (out / "task_memory.json").exists():
         raise DemonstrationError(f"{out} already holds a task memory")
     out.mkdir(parents=True, exist_ok=True)
-    tools, spec = DemoTools(demo), submit_spec(demo, embodiment.has_base)
+    save_config(out / "config.yaml", config)
+    tools = DemoTools(demo, limits=config["demonstration"], segmentation=config["segmentation"])
+    spec = submit_spec(demo, embodiment.has_base, config["annotation"])
     submitted, log = {}, []
 
     def handle(name: str, arguments: dict) -> ToolResult:
@@ -131,7 +136,7 @@ def annotate(session: ModelSession, demo: Demonstration, embodiment: Embodiment,
     prompt = PROMPT.format(robot=embodiment.description, instruction=demo.instruction, frames=demo.frames,
                            cameras=", ".join(demo.cameras))
     (out / "prompt.txt").write_text(prompt + "\n", encoding="utf-8", newline="\n")
-    session.start([*tool_specs(demo), spec])
+    session.start([*tool_specs(demo, config["demonstration"]), spec])
     session.run_turn([text(prompt)], handle)
     if "annotation" not in submitted:
         session.run_turn([text(REMINDER)], handle)

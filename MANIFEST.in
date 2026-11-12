@@ -1,5 +1,5 @@
 include LICENSE README.md CONTRIBUTING.md CHANGELOG.md CITATION.cff
-recursive-include simplevo *.py
+recursive-include simplevo *.py *.yaml
 recursive-include tests *.py
 recursive-include examples *.py *.json
 recursive-include docs *.md

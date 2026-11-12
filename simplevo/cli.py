@@ -23,6 +23,7 @@ from .agent import adapt, deploy
 from .annotate import annotate
 from .backends import CodexSession, ScriptedSession
 from .chain import AdaptationChain
+from .config import load_config
 from .demonstration import Demonstration
 from .task import Embodiment, TaskSpec
 from .task_memory import TaskMemory
@@ -62,8 +63,8 @@ def summary(records) -> dict:
 
 
 def _model(parser):
-    parser.add_argument("--model", default="gpt-6-astra")
-    parser.add_argument("--effort", default="high")
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--effort", default=None)
 
 
 def _episodes(parser):
@@ -82,8 +83,8 @@ def main(argv=None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     toy = commands.add_parser("toy")
     toy.add_argument("--out", type=Path, required=True)
-    toy.add_argument("--train", type=positive_int, default=3, help="training scenes")
-    toy.add_argument("--test", type=positive_int, default=3, help="test scenes")
+    toy.add_argument("--train", type=positive_int, default=None, help="training scenes")
+    toy.add_argument("--test", type=positive_int, default=None, help="test scenes")
     note = commands.add_parser("annotate")
     note.add_argument("--demo", type=Path, required=True)
     note.add_argument("--task", type=Path, required=True)
@@ -94,26 +95,48 @@ def main(argv=None) -> int:
     train.add_argument("--chain", type=Path, required=True)
     train.add_argument("--carry", choices=tuple(CARRY),
                        help="new chains default to lessons+outcomes; existing chains retain their setting")
-    train.add_argument("--hide-outcome", action="store_true", help="reflection without the evaluator's result")
+    train.add_argument("--hide-outcome", action="store_true", default=None, help="reflection without the evaluator's result")
     seal = commands.add_parser("fix")
     seal.add_argument("--chain", type=Path, required=True)
     seal.add_argument("--out", type=Path, required=True)
     test = commands.add_parser("deploy")
     _episodes(test)
     test.add_argument("--memory", type=Path, help="fixed working memory written by `fix`; omit for none")
+    for command in (toy, note, train, seal, test):
+        command.add_argument("--config", type=Path, help="YAML overrides; see simplevo/defaults.yaml")
     args = parser.parse_args(argv)
+    try:
+        config = load_config(args.config)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    if hasattr(args, "model") and args.model is not None:
+        config["model"]["name"] = args.model
+    if hasattr(args, "effort") and args.effort is not None:
+        config["model"]["effort"] = args.effort
+    if getattr(args, "hide_outcome", None):
+        config["episode"]["show_outcome"] = False
+
+    def new_chain(path, task):
+        # Reopening without a YAML file preserves the chain's persisted budgets.
+        configured = args.config is not None or not (path / "chain.json").exists()
+        return AdaptationChain(path, task=task,
+                               carry=getattr(args, "carry", None) or (config["memory"]["carry"] if configured else None),
+                               notes_limit=config["memory"]["notes_limit"] if configured else None)
 
     if args.command == "toy":
         from .envs.toy import TASK, ToyModel, ToyTabletop
 
         def scripted(_):
             return ScriptedSession(ToyModel())
-        chain = AdaptationChain(args.out / "chain", task=TASK.name)
-        before = deploy(None, range(1000, 1000 + args.test), ToyTabletop, scripted, TASK, args.out / "test_before")
-        trained = adapt(chain, range(args.train), ToyTabletop, scripted, TASK, args.out / "train")
+        args.train = args.train if args.train is not None else config["toy"]["train"]
+        args.test = args.test if args.test is not None else config["toy"]["test"]
+        config["toy"].update(train=args.train, test=args.test)
+        chain = new_chain(args.out / "chain", TASK.name)
+        before = deploy(None, range(1000, 1000 + args.test), ToyTabletop, scripted, TASK, args.out / "test_before", config=config)
+        trained = adapt(chain, range(args.train), ToyTabletop, scripted, TASK, args.out / "train", config=config)
         chain.fix(args.out / "fixed_memory")
         after = deploy(args.out / "fixed_memory", range(1000, 1000 + args.test), ToyTabletop, scripted, TASK,
-                       args.out / "test_after")
+                       args.out / "test_after", config=config)
         print(json.dumps({"test_without_working_memory": summary(before), "adaptation": summary(trained),
                           "test_with_fixed_working_memory": summary(after), "working_memory": chain.notes()},
                          indent=1))
@@ -125,22 +148,24 @@ def main(argv=None) -> int:
     task = load_task(args.task)
 
     def session(folder):
-        return CodexSession(folder, model=args.model, effort=args.effort)
+        return CodexSession(folder, model=config["model"]["name"], effort=config["model"]["effort"],
+                            rpc_timeout_s=config["model"]["rpc_timeout_s"],
+                            turn_timeout_s=config["model"]["turn_timeout_s"])
     if args.command == "annotate":
         model = session(args.out / "session")
         try:
-            annotate(model, Demonstration.load(args.demo), task.embodiment, args.out)
+            annotate(model, Demonstration.load(args.demo), task.embodiment, args.out, config=config)
         finally:
             model.close()
         print(json.dumps({"task_memory": str(args.out / "task_memory.json")}))
         return 0
-    options = {"task_memory": TaskMemory.load(args.task_memory) if args.task_memory else None,
+    options = {"config": config, "task_memory": TaskMemory.load(args.task_memory) if args.task_memory else None,
                "demonstration": Demonstration.load(args.demo) if args.demo else None}
     factory = load_factory(args.env)
     if args.command == "adapt":
-        chain = AdaptationChain(args.chain, task=task.name, carry=args.carry)
+        chain = new_chain(args.chain, task.name)
         records = adapt(chain, args.scenes, factory, session, task, args.out,
-                        show_outcome=not args.hide_outcome, **options)
+                        **options)
     else:
         records = deploy(args.memory, args.scenes, factory, session, task, args.out, **options)
     print(json.dumps(summary(records), indent=1))

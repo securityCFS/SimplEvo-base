@@ -14,6 +14,7 @@ import shutil
 import time
 from pathlib import Path
 
+from .config import DEFAULTS
 from .working_memory import CARRY, NOTES_FILE, NOTES_LIMIT, MemoryRefusal, check_size, episode_calls, key_calls, sha256
 
 ARCHIVE_FILES = ("request.json", "response_summary.json")
@@ -45,7 +46,7 @@ class AdaptationChain:
             if notes_limit is not None and self.meta["notes_limit"] != notes_limit:
                 raise MemoryRefusal("notes_limit cannot change on an existing chain")
         else:
-            carry = "lessons+outcomes" if carry is None else carry
+            carry = DEFAULTS["memory"]["carry"] if carry is None else carry
             notes_limit = NOTES_LIMIT if notes_limit is None else notes_limit
             if carry not in CARRY or not task:
                 raise MemoryRefusal(f"a new chain needs a task and a carry setting from {tuple(CARRY)}")

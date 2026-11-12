@@ -21,6 +21,7 @@ from typing import Callable
 
 from .backends import ModelSession, ToolResult
 from .chain import AdaptationChain, fixed_view, validate_fixed
+from .config import resolve_config, save_config
 from .content import as_json, image, text
 from .control import Controller, InvalidAction, model_state
 from .control import tool_specs as control_specs
@@ -29,7 +30,7 @@ from .demonstration import tool_specs as demo_specs
 from .schema import problems
 from .task import BASE_INSTRUCTIONS, Environment, Outcome, TaskSpec, task_prompt
 from .task_memory import QUERY_GUIDANCE, TaskMemory
-from .working_memory import MEMORY_TOOLS, REFLECTION_CALLS, MemoryTools, guidance, reflection_prompt
+from .working_memory import MEMORY_TOOLS, MemoryTools, guidance, reflection_prompt
 
 CONTROL_TOOLS = ("execute_eef", "set_gripper", "observe")
 CONTINUE_AFTER_ERROR = (
@@ -79,13 +80,20 @@ def _observe(env: Environment, cameras, folder: Path) -> list[dict]:
 
 def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Path, *,
                 task_memory: TaskMemory | None = None, demonstration: Demonstration | None = None,
-                memory_view: Path | None = None, fixed: bool = False, show_outcome: bool = True,
-                retries: int = 8, retry_wait: Callable[[int], None] | None = None) -> EpisodeRecord:
+                memory_view: Path | None = None, fixed: bool = False, show_outcome: bool | None = None,
+                retries: int | None = None, retry_wait: Callable[[int], None] | None = None,
+                config: dict | None = None) -> EpisodeRecord:
     """Run one episode in ``env`` and, unless the memory is ``fixed``, its reflection turn.
 
     ``memory_view`` is the view folder the chain built for this episode (or a private copy of a fixed memory);
     without it the agent acts with the task memory alone.
     """
+    config = resolve_config(config)
+    retries = config["episode"]["retries"] if retries is None else retries
+    show_outcome = config["episode"]["show_outcome"] if show_outcome is None else show_outcome
+    config["episode"].update(retries=retries, show_outcome=show_outcome)
+    if type(retries) is not int or retries < 0:
+        raise ValueError("retries must be a nonnegative integer")
     if env.embodiment != task.embodiment:
         raise ValueError("environment embodiment does not match the task embodiment")
     out = Path(out)
@@ -95,15 +103,20 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
     policy.mkdir(parents=True)
     embodiment = env.embodiment
     controller = Controller(env)
-    demo_tools = DemoTools(demonstration) if demonstration is not None else None
-    memory = MemoryTools(memory_view, policy, out / "memory_staging", embodiment.cameras) if memory_view else None
+    demo_tools = DemoTools(demonstration, limits=config["demonstration"],
+                           segmentation=config["segmentation"]) if demonstration is not None else None
+    memory = MemoryTools(memory_view, policy, out / "memory_staging", embodiment.cameras,
+                         limits=config["memory"]) if memory_view else None
+    if memory is not None:
+        config["memory"].update(notes_limit=memory.notes_limit, carry=memory.carry)
+    save_config(policy / "config.yaml", config)
     control_schemas = {spec["name"]: spec["inputSchema"] for spec in control_specs(embodiment)}
 
     tools = control_specs(embodiment)
     if task_memory is not None:
         tools.append(task_memory.tool_spec())
     if demo_tools is not None:
-        tools += demo_specs(demonstration)
+        tools += demo_specs(demonstration, config["demonstration"])
     if memory is not None:
         tools += memory.tool_specs()
     instructions = BASE_INSTRUCTIONS + ("\n" + QUERY_GUIDANCE if task_memory is not None else "")
@@ -163,7 +176,11 @@ def run_episode(env: Environment, session: ModelSession, task: TaskSpec, out: Pa
             if attempts >= retries or not session.is_transient(turn.error):
                 raise RuntimeError(f"model turn failed: {turn.error}")
             attempts += 1
-            (retry_wait or (lambda n: time.sleep(min(300, 15 * 2 ** (n - 1)))))(attempts)
+            if retry_wait is not None:
+                retry_wait(attempts)
+            else:
+                delay = config["episode"]["retry_initial_s"] * 2 ** (attempts - 1)
+                time.sleep(min(config["episode"]["retry_max_s"], delay))
             inputs = [text(CONTINUE_AFTER_ERROR)]
         elif not turn.messages and silent < retries:
             silent += 1
@@ -186,23 +203,24 @@ def _reflect(session: ModelSession, memory: MemoryTools, policy: Path, outcome, 
              show_outcome: bool) -> dict:
     """The reflection turn: the same conversation, the memory tools only, a bounded number of calls and writes."""
     memory.start_reflection()
-    prompt = reflection_prompt(outcome, held, show_outcome)
+    prompt = reflection_prompt(outcome, held, show_outcome, memory.limits["reflection_writes"])
+    call_limit = memory.limits["reflection_calls"]
     (policy / "reflection_prompt.txt").write_text(prompt + "\n", encoding="utf-8", newline="\n")
     record = {"calls": 0, "refused": 0}
 
     def handle(name: str, arguments: dict) -> ToolResult:
         record["calls"] += 1
-        if name not in MEMORY_TOOLS or record["calls"] > REFLECTION_CALLS:
+        if name not in MEMORY_TOOLS or record["calls"] > call_limit:
             record["refused"] += 1
             return ToolResult([text("The episode has ended; only the memory tools work"
                                     + (", and their budget is used up." if name in MEMORY_TOOLS else "."))], False,
-                              end_turn=record["calls"] >= REFLECTION_CALLS)
+                              end_turn=record["calls"] >= call_limit)
         try:
             return ToolResult(memory.call(name, arguments, f"reflection-{record['calls']}"),
-                              end_turn=record["calls"] >= REFLECTION_CALLS)
+                              end_turn=record["calls"] >= call_limit)
         except (ValueError, KeyError, TypeError) as error:
             record["refused"] += 1
-            return ToolResult([text(f"Refused: {error}")], False, end_turn=record["calls"] >= REFLECTION_CALLS)
+            return ToolResult([text(f"Refused: {error}")], False, end_turn=record["calls"] >= call_limit)
 
     turn = session.run_turn([text(prompt)], handle)
     record.update(status=turn.status, note_writes=memory.reflection_writes, messages=turn.messages)

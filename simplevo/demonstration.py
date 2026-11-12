@@ -19,16 +19,17 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .config import DEFAULTS
 from .content import as_json, encode_png, image, text
 from .control import rotation_deg
 from .schema import problems, tool
 from .task import validate_names
 
 HEADER = "HISTORICAL DEMONSTRATION: a separate recorded episode, not the current scene; no environment step advanced."
-MAX_IMAGES = 8
-MAX_ACTION_ROWS = 8
-MAX_ACTION_SPAN = 600      # frames per demo_actions call
-PREVIEW_PX = 384           # longest side of a returned frame
+MAX_IMAGES = DEFAULTS["demonstration"]["max_images"]
+MAX_ACTION_ROWS = DEFAULTS["demonstration"]["max_action_rows"]
+MAX_ACTION_SPAN = DEFAULTS["demonstration"]["max_action_span"]
+PREVIEW_PX = DEFAULTS["demonstration"]["preview_px"]
 DEMO_TOOLS = ("demo_search", "demo_inspect", "demo_actions")
 
 
@@ -138,8 +139,10 @@ def _persistent(mask: np.ndarray, persist: int, gap: int) -> list[tuple[int, int
     return [(start, end) for start, end in merged if end - start >= persist]
 
 
-def segment(demo: Demonstration, *, moving_m: float = 0.0006, moving_rad: float = 0.005, smooth: int = 7,
-            persist: int = 6, gap: int = 30) -> dict:
+def segment(demo: Demonstration, *, moving_m: float = DEFAULTS["segmentation"]["moving_m"],
+            moving_rad: float = DEFAULTS["segmentation"]["moving_rad"],
+            smooth: int = DEFAULTS["segmentation"]["smooth"],
+            persist: int = DEFAULTS["segmentation"]["persist"], gap: int = DEFAULTS["segmentation"]["gap"]) -> dict:
     """Motion bouts per arm (and base) and gripper events.
 
     A frame counts as moving when the smoothed per-frame translation exceeds ``moving_m`` or the rotation exceeds
@@ -187,7 +190,8 @@ def segment(demo: Demonstration, *, moving_m: float = 0.0006, moving_rad: float 
 
 # ----------------------------------------------------------------------------- the demonstration tools
 
-def tool_specs(demo: Demonstration) -> list[dict]:
+def tool_specs(demo: Demonstration, limits: dict | None = None) -> list[dict]:
+    limits = DEFAULTS["demonstration"] if limits is None else limits
     frame = {"type": "integer", "minimum": 0, "maximum": demo.frames - 1}
     region = {"anyOf": [{"type": "null"}, {"type": "array", "minItems": 4, "maxItems": 4,
                                            "items": {"type": "number", "minimum": 0, "maximum": 1}}]}
@@ -196,23 +200,25 @@ def tool_specs(demo: Demonstration) -> list[dict]:
             "List the recorded demonstration's motion bouts (which arm or base moved, over which frames, how far) "
             "and its gripper events (close/open with the measured opening). " + HEADER), {}),
         tool("demo_inspect", (
-            f"Return up to {MAX_IMAGES} frames of the recorded demonstration from one camera, optionally cropped "
+            f"Return up to {limits['max_images']} frames of the recorded demonstration from one camera, optionally cropped "
             "to a normalized region [x0, y0, x1, y1]. " + HEADER),
-            {"frames": {"type": "array", "items": frame, "minItems": 1, "maxItems": MAX_IMAGES, "uniqueItems": True},
+            {"frames": {"type": "array", "items": frame, "minItems": 1, "maxItems": limits['max_images'], "uniqueItems": True},
              "camera": {"type": "string", "enum": list(demo.cameras)}, "region": region}),
         tool("demo_actions", (
-            f"Measured motion of the recorded demonstration over a frame range of at most {MAX_ACTION_SPAN} frames, "
-            f"sampled at up to {MAX_ACTION_ROWS} rows and reported relative to the first frame of the range "
+            f"Measured motion of the recorded demonstration over a frame range of at most {limits['max_action_span']} frames, "
+            f"sampled at up to {limits['max_action_rows']} rows and reported relative to the first frame of the range "
             "(translation in metres, rotation in degrees, gripper opening). A reference, never a command for the "
             "current scene. " + HEADER),
-            {"start": frame, "end": frame, "rows": {"type": "integer", "minimum": 2, "maximum": MAX_ACTION_ROWS}}),
+            {"start": frame, "end": frame, "rows": {"type": "integer", "minimum": 2, "maximum": limits['max_action_rows']}}),
     ]
 
 
 class DemoTools:
-    def __init__(self, demo: Demonstration):
+    def __init__(self, demo: Demonstration, *, limits: dict | None = None, segmentation: dict | None = None):
+        self.limits = dict(DEFAULTS["demonstration"] if limits is None else limits)
+        self.segmentation = dict(DEFAULTS["segmentation"] if segmentation is None else segmentation)
         self.demo = demo
-        self.specs = {spec["name"]: spec["inputSchema"] for spec in tool_specs(demo)}
+        self.specs = {spec["name"]: spec["inputSchema"] for spec in tool_specs(demo, self.limits)}
         self._segments = None
 
     def call(self, name: str, arguments: dict) -> list[dict]:
@@ -225,7 +231,7 @@ class DemoTools:
 
     def _demo_search(self, _):
         if self._segments is None:
-            self._segments = segment(self.demo)
+            self._segments = segment(self.demo, **self.segmentation)
         return [as_json(self._segments)]
 
     def _demo_inspect(self, arguments):
@@ -239,7 +245,7 @@ class DemoTools:
                 left, top = int(x0 * picture.width), int(y0 * picture.height)
                 picture = picture.crop((left, top, max(left + 1, round(x1 * picture.width)),
                                         max(top + 1, round(y1 * picture.height))))
-            scale = min(2.0, PREVIEW_PX / max(picture.size))
+            scale = min(2.0, self.limits['preview_px'] / max(picture.size))
             if scale != 1:
                 picture = picture.resize((max(1, round(picture.width * scale)), max(1, round(picture.height * scale))),
                                          Image.Resampling.LANCZOS)
@@ -250,8 +256,8 @@ class DemoTools:
 
     def _demo_actions(self, arguments):
         start, end = arguments["start"], arguments["end"]
-        if not start < end or end - start > MAX_ACTION_SPAN:
-            raise DemonstrationError(f"need start < end and a span of at most {MAX_ACTION_SPAN} frames")
+        if not start < end or end - start > self.limits['max_action_span']:
+            raise DemonstrationError(f"need start < end and a span of at most {self.limits['max_action_span']} frames")
         rows = []
         for index in sorted({int(round(value)) for value in np.linspace(start, end, arguments["rows"])}):
             row = {"frame": index}

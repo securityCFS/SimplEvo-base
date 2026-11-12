@@ -1,16 +1,24 @@
-# SimplEvo
+<h1 align="center">SimplEvo</h1>
+<h2 align="center">Review the Episodes, Refine the Lessons:<br>Simple Memory Evolution for Embodied Agents</h2>
 
-**Review the Episodes, Refine the Lessons: Simple Memory Evolution for Embodied Agents**
-
-Yifei Yao, Yude Zou, Xing Gao, Guanbo Jiao, Yukai Wang, Jianming Ma, Weinan Zhang, Chunhua Shen
-
-[Paper (arXiv:2611.11509)](https://arxiv.org/abs/2611.11509)
-
-
+<p align="center">
+  Yifei Yao<sup>1*</sup> &nbsp; Yude Zou<sup>1,2*</sup> &nbsp; Xing Gao<sup>1†</sup> &nbsp;
+  Guanbo Jiao<sup>1,3</sup> &nbsp; Yukai Wang<sup>1</sup><br>
+  Jianming Ma<sup>1,2</sup> &nbsp; Weinan Zhang<sup>1,2</sup> &nbsp; Chunhua Shen<sup>1,4</sup>
+</p>
+<p align="center">
+  <sup>1</sup>Shanghai Artificial Intelligence Laboratory &nbsp;
+  <sup>2</sup>Shanghai Jiao Tong University<br>
+  <sup>3</sup>Fudan University &nbsp; <sup>4</sup>Zhejiang University<br>
+  <sup>*</sup>Equal contribution &nbsp; <sup>†</sup>Corresponding author
+</p>
+<p align="center">
+  <a href="https://arxiv.org/abs/2611.11509"><img src="https://img.shields.io/badge/arXiv-2611.11509-b31b1b.svg" alt="arXiv:2611.11509"></a>
+  <a href="https://arxiv.org/pdf/2611.11509"><img src="https://img.shields.io/badge/Paper-PDF-red.svg" alt="Paper PDF"></a>
+  <a href="https://github.com/user-attachments/assets/c2f56b3a-01c5-4a82-ad18-9d945a67feef"><img src="https://img.shields.io/badge/Video-3_min_with_narration-2563eb.svg" alt="Video: 3 minutes with narration"></a>
+</p>
 
 https://github.com/user-attachments/assets/c2f56b3a-01c5-4a82-ad18-9d945a67feef
-
-
 
 SimplEvo lets a multimodal LLM control a robot directly and improve from its own episodes without any weight
 update. The model issues every end-effector command itself, sees only RGB images and the robot's measured state, and
@@ -43,6 +51,49 @@ The benchmark results are success rates on test scenes, with both memories fixed
   and 52.00% on randomized ones.
 - **Lessons transfer across models.** Gemini 3.8 Flash reads the working memory of GPT-6-Astra as is and rises from
   23.8% to 53.8% on EBench, with no adaptation of its own.
+
+## Configuration
+
+Runtime hyperparameters live in [`simplevo/defaults.yaml`](simplevo/defaults.yaml), grouped by model,
+episode, memory, demonstration, segmentation, annotation and toy settings. Copy it to customize a run,
+or write a YAML file containing just the values you want to change:
+
+```yaml
+model:
+  name: gpt-6-astra
+  effort: high
+memory:
+  notes_limit: 32768
+  reflection_calls: 12
+  reflection_writes: 2
+toy:
+  train: 5
+  test: 3
+```
+
+```bash
+simplevo toy --config experiment.yaml --out runs/configured
+simplevo adapt --config experiment.yaml --env my_adapter:make_env \
+  --task task.json --scenes 0 1 2 --chain runs/chain --out runs/train
+```
+
+Precedence is **command-line flags → YAML → bundled defaults**. Each episode records its effective
+settings in `policy/config.yaml`; annotation writes `config.yaml` next to its task memory. An existing
+chain retains its carry mode and notes budget when reopened without a configuration file. When supplying
+YAML for an existing chain, use the same carry mode and notes budget as its `chain.json`.
+
+The Python API accepts the same configuration:
+
+```python
+from simplevo.config import load_config
+
+config = load_config("experiment.yaml")
+# Pass config=config to run_episode(), adapt(), deploy(), or annotate().
+# For a new AdaptationChain, set carry=config["memory"]["carry"] and
+# notes_limit=config["memory"]["notes_limit"].
+```
+
+Task instructions, cameras, arms and robot action limits remain in the task specification (`--task`).
 
 ## This repository
 
