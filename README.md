@@ -4,9 +4,13 @@
 
 Yifei Yao, Yude Zou, Xing Gao, Guanbo Jiao, Yukai Wang, Jianming Ma, Weinan Zhang, Chunhua Shen
 
-[Paper (arXiv:2611.11509)](https://arxiv.org/abs/2611.11509) | [Video, 3 min with narration](assets/simplevo_teaser.mp4)
+[Paper (arXiv:2611.11509)](https://arxiv.org/abs/2611.11509)
 
-[![Test episodes with both memories fixed](assets/preview.gif)](assets/simplevo_teaser.mp4)
+
+
+https://github.com/user-attachments/assets/c2f56b3a-01c5-4a82-ad18-9d945a67feef
+
+
 
 SimplEvo lets a multimodal LLM control a robot directly and improve from its own episodes without any weight
 update. The model issues every end-effector command itself, sees only RGB images and the robot's measured state, and
