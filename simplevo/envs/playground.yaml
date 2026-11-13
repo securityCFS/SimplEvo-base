@@ -1,0 +1,12 @@
+# Panda tabletop physics and rendering. SI units; one control step = substeps / physics_hz seconds.
+physics_hz: 240
+substeps: 8
+step_limit: 480
+width: 480
+height: 360
+arm_force: 240
+finger_force: 30
+cube_half_size: 0.02
+cube_mass: 0.04
+pad_half_size: 0.065
+settle_steps: 12  # consecutive control steps resting on target before success

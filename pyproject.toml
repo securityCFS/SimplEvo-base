@@ -26,6 +26,7 @@ Repository = "https://github.com/securityCFS/SimplEvo-base"
 Issues = "https://github.com/securityCFS/SimplEvo-base/issues"
 
 [project.optional-dependencies]
+playground = ["pybullet==3.2.7"]
 test = ["pytest>=8,<10"]
 dev = ["pytest>=8,<10", "build>=1.2,<2", "ruff>=0.11,<1", "twine>=6,<7"]
 
@@ -33,7 +34,7 @@ dev = ["pytest>=8,<10", "build>=1.2,<2", "ruff>=0.11,<1", "twine>=6,<7"]
 simplevo = "simplevo.cli:main"
 
 [tool.setuptools.package-data]
-simplevo = ["defaults.yaml"]
+simplevo = ["defaults.yaml", "envs/*.yaml"]
 
 [tool.setuptools.packages.find]
 include = ["simplevo*"]

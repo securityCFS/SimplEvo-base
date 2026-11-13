@@ -145,6 +145,24 @@ adaptation and 3/3 after fixing its memory. Use a new `--out` directory for anot
 Development checks, distribution checks and contribution guidance are in [CONTRIBUTING.md](CONTRIBUTING.md) and
 the [release checklist](docs/RELEASE.md).
 
+## Simulation playground
+
+![Panda pick-and-place — scripted physics demo](assets/playground.gif)
+
+Try a Panda arm picking up a red cube and placing it on a green pad, with contact physics and two RGB cameras.
+The optional playground runs headlessly on CPU. Its offline reference trajectory generates an animated preview,
+a demonstration and a task file, without connecting to a model account:
+
+```bash
+# In a Python 3.11 environment:
+python -m pip install -e ".[playground]"
+python -m simplevo.envs.playground --scene 0 --out runs/panda
+```
+
+Open `runs/panda/preview.gif`. Use `simplevo.envs.playground:make_env` with the existing model commands to run
+annotation, adaptation and deployment yourself. See the [playground guide](docs/PLAYGROUND.md) for the complete
+commands and output files.
+
 ## Using it with a model and a benchmark
 
 1. Implement `simplevo.task.Environment` for the benchmark (see `docs/ADAPTER.md`) and describe the task and robot

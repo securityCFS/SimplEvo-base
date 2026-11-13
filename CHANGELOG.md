@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an optional headless Panda pick-and-place playground, offline GIF/demo export, and a standard environment factory.
+
 - Add a packaged YAML configuration for model settings, retries, memory and reflection budgets,
   demonstration tools, motion segmentation, annotation and toy runs.
 - Accept `--config` on CLI commands and `config=` in the episode and annotation APIs; save resolved
@@ -10,6 +12,8 @@
 
 
 ## Unreleased
+
+- Add an optional headless Panda pick-and-place playground, offline GIF/demo export, and a standard environment factory.
 
 - Stop cancelled live episodes and propagate environment failures after motion, preserving the partial episode
   evidence for inspection.
