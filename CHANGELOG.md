@@ -7,7 +7,7 @@ First public release of the benchmark-independent SimplEvo implementation.
 - Task-memory annotation from one demonstration, direct end-effector control, working-memory adaptation along a
   chain with one reflection turn per episode, and deployment with a sealed working memory.
 - `simplevo baseline`: direct control without working memory, with the task memory (the paper's baseline) or with
-  the instruction alone.
+  the instruction alone. `examples/summarize_runs.py` averages success rate and score per task, as in the paper.
 - YAML configuration (`simplevo/defaults.yaml`) for model settings, retries, memory and reflection budgets,
   demonstration tools, motion segmentation, annotation and toy runs. Every command accepts `--config`, the Python
   API accepts `config=`, and each episode and annotation saves its resolved settings.

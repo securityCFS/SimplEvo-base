@@ -91,6 +91,28 @@ def test_direct_control_baseline_cli(tmp_path, monkeypatch, capsys, with_task_me
         assert not tools & {"read_task_notes", "write_task_notes", "history", "inspect"}
         assert ("query_icl" in tools) == with_task_memory
 
+
+def test_summarize_runs_averages_per_task(tmp_path):
+    import subprocess
+
+    def episode(task, index, success, score, finished=True):
+        policy = tmp_path / task / f"{index:03d}" / "policy"
+        policy.mkdir(parents=True)
+        if finished:
+            (policy / "result.json").write_text(json.dumps({"outcome": {"success": success, "score": score}}))
+    for index, success in enumerate([True, False, False, False], 1):      # task a: 1/4
+        episode("a", index, success, 100.0 if success else 0.0)
+    for index in (1, 2):                                                    # task b: 2/2
+        episode("b", index, True, 100.0)
+    episode("b", 3, False, None, finished=False)
+    script = Path(__file__).parents[1] / "examples" / "summarize_runs.py"
+    printed = subprocess.run([sys.executable, str(script), str(tmp_path / "a"), str(tmp_path / "b")],
+                             check=True, capture_output=True, text=True).stdout
+    summary = json.loads(printed)
+    assert summary["tasks"][str(tmp_path / "a")]["success_rate"] == 25.0
+    assert summary["tasks"][str(tmp_path / "b")]["unfinished"] == ["003"]
+    assert summary["overall"] == {"tasks": 2, "success_rate": 62.5, "mean_score": 62.5, "complete": False}
+
 @pytest.mark.parametrize("count", ["0", "-1"])
 @pytest.mark.parametrize("flag", ["--train", "--test"])
 def test_invalid_scene_counts_do_not_create_output(tmp_path, count, flag):

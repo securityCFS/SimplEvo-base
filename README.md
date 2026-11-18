@@ -189,16 +189,47 @@ from the instruction and its observations; it has no memory tools, no reflection
 nothing carries over from one episode to the next. With `--task-memory` and `--demo` this is the direct-control
 baseline of the paper (46.7% for GPT-6-Astra on EBench). Without them, the model receives the instruction alone.
 
+To reproduce the paper's comparison between the baseline and SimplEvo on a benchmark:
+
+1. **Connect the benchmark.** Implement an `Environment` adapter as described in `docs/ADAPTER.md`. It returns
+   RGB views and measured proprioception only, and it enforces the benchmark's own step limit and success check.
+   Benchmark adapters are not part of this repository.
+2. **Write the task memory once per task.** Annotate one training demonstration. The baseline and SimplEvo read the
+   same task memory, so the comparison isolates the working memory.
+
+   ```bash
+   python -m simplevo annotate --demo demos/my_task --task my_task.json --out memory/my_task/task
+   ```
+
+3. **Run the baseline on the test scenes.** The defaults follow the paper: `gpt-6-astra` at `high` reasoning
+   effort, with chunks of up to six waypoints.
+
+   ```bash
+   python -m simplevo baseline --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
+       --task-memory memory/my_task/task --demo demos/my_task --out runs/my_task/baseline
+   ```
+
+4. **Run SimplEvo on the same test scenes.** Adapt on training scenes that are disjoint from the test scenes, fix
+   the working memory and deploy it, as in the commands above.
+5. **Compare per task.** Each episode keeps its outcome in `<out>/NNN/policy/result.json`. The paper averages the
+   success rate and score within each task first and then over tasks:
+
+   ```bash
+   python examples/summarize_runs.py runs/*/baseline     # the baseline
+   python examples/summarize_runs.py runs/*/test         # SimplEvo with the fixed working memory
+   ```
+
+Every test episode opens a new model session, and an existing episode folder is refused, so each scene is
+attempted once and failed episodes stay in the count. For the raw variant without task memory, omit
+`--task-memory` and `--demo` in step 3:
+
 ```bash
-# The paper's baseline: task memory and demonstration, no working memory
-python -m simplevo baseline --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
-    --task-memory memory/my_task/task --demo demos/my_task --out runs/my_task/baseline
-# Raw direct control: the instruction alone
 python -m simplevo baseline --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
     --out runs/my_task/raw
 ```
 
-Run it on the same test scenes as `deploy` to measure what the working memory adds.
+Offline, `python -m simplevo toy --out runs/toy` runs the same comparison with a scripted model and reports it as
+`test_without_working_memory` and `test_with_fixed_working_memory`.
 
 ### Model backend
 
