@@ -44,6 +44,9 @@ simplevo adapt --env simplevo.envs.playground:make_env --task runs/panda/task.js
 simplevo fix --chain runs/panda-chain --out runs/panda-fixed
 simplevo deploy --env simplevo.envs.playground:make_env --task runs/panda/task.json \
   --scenes 100 101 102 --task-memory runs/panda-task-memory --memory runs/panda-fixed --out runs/panda-test
+# Direct-control baseline on the same test scenes, without working memory
+simplevo baseline --env simplevo.envs.playground:make_env --task runs/panda/task.json \
+  --scenes 100 101 102 --task-memory runs/panda-task-memory --demo runs/panda/demo --out runs/panda-baseline
 ```
 
 Model and memory hyperparameters use the existing `--config experiment.yaml` interface. The simulation defaults

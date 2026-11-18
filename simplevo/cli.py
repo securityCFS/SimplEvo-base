@@ -5,6 +5,9 @@
     adapt      online adaptation on training scenes (needs a model and an environment adapter)
     fix        seal the working memory of a chain
     deploy     run new scenes with a fixed working memory, or with none
+    baseline   direct control without working memory: no reflection, nothing carried between episodes. With
+               --task-memory and --demo it is the paper's direct-control baseline; without them the model gets
+               the instruction alone
 
 ``--env`` names an environment factory as ``package.module:function``; it is called with one scene identifier and
 returns a ``simplevo.task.Environment``. ``--task`` is a JSON file::
@@ -102,7 +105,9 @@ def main(argv=None) -> int:
     test = commands.add_parser("deploy")
     _episodes(test)
     test.add_argument("--memory", type=Path, help="fixed working memory written by `fix`; omit for none")
-    for command in (toy, note, train, seal, test):
+    raw = commands.add_parser("baseline", help="direct control without working memory")
+    _episodes(raw)
+    for command in (toy, note, train, seal, test, raw):
         command.add_argument("--config", type=Path, help="YAML overrides; see simplevo/defaults.yaml")
     args = parser.parse_args(argv)
     try:
@@ -167,7 +172,7 @@ def main(argv=None) -> int:
         records = adapt(chain, args.scenes, factory, session, task, args.out,
                         **options)
     else:
-        records = deploy(args.memory, args.scenes, factory, session, task, args.out, **options)
+        records = deploy(getattr(args, "memory", None), args.scenes, factory, session, task, args.out, **options)
     print(json.dumps(summary(records), indent=1))
     return 0
 

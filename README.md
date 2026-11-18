@@ -41,8 +41,8 @@ The benchmark results are success rates on test scenes, with both memories fixed
 
 - **EBench.** GPT-6-Astra under direct control rises from 46.7% to 81.7%. The best post-trained policy reaches
   61.4%.
-- **RoboDojo.** SimplEvo reaches 69.63% with a score of 75.32, leading the benchmark. The same model, zero-shot, is
-  at 22.48%.
+- **RoboDojo.** SimplEvo reaches 69.63% with a score of 75.32, the top result on the benchmark. The same model,
+  zero-shot, is at 22.48%.
 - **Text is enough.** On four high-precision EBench tasks, adding replayed visual frames to the working memory gives
   the same success rate (47.5%) and costs more tokens.
 - **Memory helps direct control most.** On the same four tasks, direct control rises from 15.0% to 47.5%, while a
@@ -115,7 +115,10 @@ demonstrates the full loop locally.
 | | `simplevo/chain.py` | the adaptation chain (view, commit) and the fixed memory (seal, validation) |
 | | `simplevo/agent.py` | one episode with its reflection turn; `adapt` and `deploy` |
 | Model | `simplevo/backends/` | the `ModelSession` contract, a Codex app-server backend, a scripted stand-in |
-| Offline example | `simplevo/envs/toy.py` | a toy tabletop and a scripted stand-in for the model |
+| Offline examples | `simplevo/envs/toy.py` | a toy tabletop and a scripted stand-in for the model |
+| | `simplevo/envs/playground.py` | an optional headless Panda pick-and-place scene in PyBullet |
+| Entry points | `simplevo/cli.py` | `toy`, `annotate`, `adapt`, `fix`, `deploy` and `baseline` |
+| | `simplevo/config.py` | loading `defaults.yaml` and YAML overrides |
 
 `docs/METHOD.md` maps the code to the method and lists the file formats. `docs/ADAPTER.md` explains how to connect
 a benchmark.
@@ -134,9 +137,9 @@ python -m pytest -q                     # run the offline test suite
 python -m simplevo toy --out runs/toy    # the whole loop on the toy tabletop
 ```
 
-The `toy` command uses a scripted model to run the full workflow: evaluate the initial agent, adapt on training
-scenes, fix the working memory, and evaluate on the same test scenes. Each episode folder under `runs/toy` records
-the prompt, tool calls, observations, and reflection.
+The `toy` command uses a scripted model to run the full workflow: evaluate the direct-control baseline, adapt on
+training scenes, fix the working memory, and evaluate on the same test scenes. Each episode folder under
+`runs/toy` records the prompt, tool calls, observations, and reflection.
 
 With the default three training and three test scenes, the scripted example reports 0/3 successes before
 adaptation and 3/3 after fixing its memory. Use a new `--out` directory for another run. For the Python API, run
@@ -178,6 +181,26 @@ python -m simplevo fix    --chain memory/my_task/chain --out memory/my_task/fixe
 python -m simplevo deploy --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
     --task-memory memory/my_task/task --demo demos/my_task --memory memory/my_task/fixed --out runs/my_task/test
 ```
+
+### Direct-control baseline
+
+`baseline` runs the same direct-control loop without working memory. The model issues every end-effector command
+from the instruction and its observations; it has no memory tools, no reflection turn follows an episode, and
+nothing carries over from one episode to the next. With `--task-memory` and `--demo` this is the direct-control
+baseline of the paper (46.7% for GPT-6-Astra on EBench). Without them, the model receives the instruction alone.
+
+```bash
+# The paper's baseline: task memory and demonstration, no working memory
+python -m simplevo baseline --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
+    --task-memory memory/my_task/task --demo demos/my_task --out runs/my_task/baseline
+# Raw direct control: the instruction alone
+python -m simplevo baseline --env my_adapter:make_env --task my_task.json --scenes test_a test_b \
+    --out runs/my_task/raw
+```
+
+Run it on the same test scenes as `deploy` to measure what the working memory adds.
+
+### Model backend
 
 The commands drive the model through the Codex CLI's app-server (`codex` must be installed and logged in). Another
 model is connected by implementing `simplevo.backends.ModelSession`: a persistent conversation with image input

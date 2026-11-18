@@ -72,6 +72,10 @@ received, and the notes if the model rewrote them. `chain.fix(dest)` seals the w
 `deploy(fixed, scenes, ...)` gives every test episode a private copy of the snapshot, runs no reflection, and
 verifies the snapshot after each episode.
 
+The direct-control baseline is `deploy(None, scenes, ...)`, or `simplevo baseline` on the command line: the same
+episodes with no working-memory view, so the model has no memory tools and no reflection turn follows. With a task
+memory and a demonstration it is the paper's baseline; without them the model acts from the instruction alone.
+
 ## Files
 
 A chain:

@@ -51,6 +51,46 @@ def test_annotation_adaptation_sealing_and_deployment_cli(tmp_path, monkeypatch,
     capsys.readouterr()
 
 
+
+def _registered_tools(log: Path) -> list[set]:
+    starts = [json.loads(line) for line in log.read_text().splitlines() if '"thread/start"' in line]
+    return [{spec["name"] for spec in start["params"]["dynamicTools"]} for start in starts]
+
+
+@pytest.mark.parametrize("with_task_memory", [True, False])
+def test_direct_control_baseline_cli(tmp_path, monkeypatch, capsys, with_task_memory):
+    """`baseline`: direct control without working memory, with the task memory (the paper's baseline) or without."""
+    log = tmp_path / "rpc.jsonl"
+    monkeypatch.setenv("SIMPLEVO_CODEX_BIN", shlex.join([sys.executable, str(Path(__file__).with_name("fake_codex.py"))]))
+    monkeypatch.setenv("FAKE_CODEX_LOG", str(log))
+    monkeypatch.setenv("FAKE_CODEX_SCRIPT", "[]")
+    task = tmp_path / "task.json"
+    task.write_text(json.dumps(asdict(TASK)))
+    extra = []
+    if with_task_memory:
+        demo = Demonstration(TASK.instruction,
+                             {arm: np.tile([0, 0, 0.2, 1, 0, 0, 0], (3, 1)) for arm in TASK.embodiment.arms},
+                             {arm: np.ones(3) for arm in TASK.embodiment.arms}, TASK.embodiment.cameras,
+                             lambda camera, index: Image.new("RGB", (16, 16)))
+        demo.save(tmp_path / "demo")
+        TaskMemory(text="Stages: hold the block.", keyframes=[]).save(tmp_path / "task-memory")
+        extra = ["--task-memory", str(tmp_path / "task-memory"), "--demo", str(tmp_path / "demo")]
+    assert main(["baseline", "--task", str(task), "--env", "simplevo.envs.toy:ToyTabletop", "--scenes", "0", "1",
+                 "--out", str(tmp_path / "baseline"), *extra]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["episodes"] == 2
+    for index in ("001", "002"):
+        episode = tmp_path / "baseline" / index
+        result = json.loads((episode / "policy/result.json").read_text())
+        assert result["outcome"] is not None and result["reflection"] is None
+        assert not (episode / "memory_view").exists() and not (episode / "memory_staging").exists()
+        prompt = (episode / "policy/initial_prompt.txt").read_text()
+        assert "read_task_notes" not in prompt and ("query_icl" in prompt) == with_task_memory
+    for tools in _registered_tools(log):
+        assert {"execute_eef", "set_gripper", "observe"} <= tools
+        assert not tools & {"read_task_notes", "write_task_notes", "history", "inspect"}
+        assert ("query_icl" in tools) == with_task_memory
+
 @pytest.mark.parametrize("count", ["0", "-1"])
 @pytest.mark.parametrize("flag", ["--train", "--test"])
 def test_invalid_scene_counts_do_not_create_output(tmp_path, count, flag):

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use SimplEvo, please cite the paper below."
-title: "SimplEvo: Simple Memory Evolution for Embodied Agents"
+title: "SimplEvo-base"
 type: software
 license: MIT
 repository-code: "https://github.com/securityCFS/SimplEvo-base"
